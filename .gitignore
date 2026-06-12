@@ -1,0 +1,14 @@
+*.sqlite
+*.db
+
+*.png
+*.jpg
+*.jpeg
+
+__pycache__/
+*.pyc
+
+.vscode/
+
+Screenshots*/
+Output*/
