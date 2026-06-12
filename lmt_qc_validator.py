@@ -237,7 +237,7 @@ def next_sample():
         )
 
         date_string = datetime.now().strftime("%Y-%m-%d")
-        report_file = os.path.join(screenshot_folder, f"Script5B_{date_string}.txt")
+        report_file = os.path.join(screenshot_folder, f"lmt_qc_validator_{date_string}.txt")
 
         with open(report_file, "w") as f:
             f.write("LMT QC Validation Report\n\n")
