@@ -145,7 +145,6 @@ def start():
     except Exception as e:
         messagebox.showerror("Error", str(e))
 
-
 root = Tk()
 root.title("LMT Gap Fill Assumption Generator")
 root.geometry("800x850")
