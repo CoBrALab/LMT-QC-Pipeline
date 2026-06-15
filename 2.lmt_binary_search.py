@@ -947,7 +947,6 @@ class BinarySearchGUI:
         )
         self.root.quit()
 
-# Entry point
 if __name__ == "__main__":
     from PIL import Image, ImageTk
     root = Tk()
