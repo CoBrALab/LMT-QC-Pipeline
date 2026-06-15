@@ -850,7 +850,7 @@ class BinarySearchGUI:
         df_out = self.df_all.copy()
 
         # Set of all frame numbers that were candidates for binary search
-        # (assumed rows with original IN_NEST == -1)
+        # (assumed rows with original IN_NEST == -1).
         neg_frames = set(self.df_all[(self.df_all["ASSUMPTION_TYPE"] == "ASSUMED") & (self.df_all["IN_NEST"] == -1)]["FRAMENUMBER"].tolist())
 
         # Searchable = neg_frames minus the ones skipped due to short gap threshold
