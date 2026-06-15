@@ -826,7 +826,7 @@ class BinarySearchGUI:
 
     # Finish 
     def _finish(self):
-        # Close out the last gap timer
+        # Close out the last gap timer.
         if self._gap_start_time is not None and self._current_gap_index is not None:
             elapsed = time.time() - self._gap_start_time
             for past_task, _ in reversed(self.history):
