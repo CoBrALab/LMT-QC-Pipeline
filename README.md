@@ -2,7 +2,7 @@
 
 **Purpose:**
 - Reads raw LMT tracking detections and classifies each frame as IN NEST, OUT OF NEST, or unknown (-1) by comparing animal position against user-defined ROI coordinates.
-- Fills gaps between detections using a buffer-zone heuristic; outputs a complete per-frame classification table.
+- Fills gaps between detections using a buffer-zone heuristic, outputs a complete per-frame classification table.
 
 **Inputs:**
 - LMT SQLite database (table: `DETECTION`, columns: `FRAMENUMBER`, `MASS_X`, `MASS_Y`, `ANIMALID`)
@@ -17,16 +17,15 @@
 **Core Logic:**
 - Iterates consecutive detection pairs; classifies detected frames by point-in-rectangle test against the nest ROI
 - Gap frames assigned `IN_NEST = 1` if the frame before the gap is inside the nest and the frame after is inside the buffer; otherwise `IN_NEST = −1`
-- Last detected frame appended separately after the loop
 
 **Do NOT modify:**
 - ROI test uses strict inequality (`<`, not `<=`) — changing to `<=` alters boundary behaviour
-- `IN_NEST = −1` sentinel must remain −1; downstream scripts (lmt_binary_search.py, lmt_qc_validator.py) filter on this exact value
+- `IN_NEST = −1` sentinel must remain −1; downstream scripts (`lmt_binary_search.py`, `lmt_qc_validator.py`) filter on this exact value
 - Table name `GAP_FILL_ANALYSIS` — hardcoded in lmt_binary_search.py's read query
 
 **Open-source notes:**
 - ROI coordinates are pixel-space values specific to each experimental arena; defaults in the GUI (200–350, 50–175) are placeholders and will be wrong for any other setup
-- Buffer ROI must fully contain the nest ROI or gap-fill logic produces incorrect results — this is not validated in code
+- Buffer ROI must fully contain the nest ROI or gap-fill logic produces incorrect results (this is not validated in code)
 - No input validation on ROI coordinate ordering (xmin < xmax, ymin < ymax)
 
 ---
@@ -34,7 +33,7 @@
 ### Script: `lmt_binary_search.py`
 
 **Purpose:**
-- Resolves `IN_NEST = −1` (unknown) assumed frames from `lmt_gap_fill.py` output using a human-in-the-loop binary search over video frames.
+- Resolves `IN_NEST = −1` (unknown) assumed frames with a gap duration greater than 30s from `lmt_gap_fill.py` output using a human-in-the-loop binary search over video frames.
 - Outputs a complete frame classification table preserving all rows from the lmt_gap_fill.py input, with a `BINARY_SEARCH` column added.
 
 **Inputs:**
@@ -93,14 +92,14 @@
 **Do NOT modify:**
 - `FRAME_CONVERSION = 2` — must match the value in lmt_binary_search.py
 - Video filename frame-number parsing — must match lmt_binary_search.py convention
-- `QC_TYPE` column written to output — lmt_qc_validator.py reads this to select the correct filter; changing the string values breaks the handoff
+- `QC_TYPE` column written to output — `lmt_qc_validator.py` reads this to select the correct filter; changing the string values breaks the handoff
 - Table name `QC_ASSUMED_SAMPLES` — hardcoded in lmt_qc_validator.py's read query
 - `IN_NEST = −1` rows are excluded from the assumed pool — these are unresolved frames with no valid algorithm classification to validate against
 
 **Open-source notes:**
-- No fixed random seed — each run produces a different sample; reproducibility requires the user to manage this externally if needed
+- No fixed random seed, i.e, each run produces a different sample; reproducibility requires the user to manage this externally if needed
 - If both QC types are selected and one fails (e.g. no detected rows in the database), the other still completes; partial results are reported
-- `BINARY_SEARCH` column defaults to 0 if absent — provides backward compatibility with pre-update lmt_binary_search.py outputs, but such outputs also lack detected rows, so the detected QC pool will be empty
+- `BINARY_SEARCH` column defaults to 0 if absent, this provides backward compatibility with pre-update `lmt_binary_search.py` outputs, but such outputs also lack detected rows, so the detected QC pool will be empty
 
 ---
 
@@ -111,7 +110,7 @@
 
 **Inputs:**
 - `lmt_qc_sampler_<slug>_<timestamp>.sqlite` (table: `QC_ASSUMED_SAMPLES`)
-- Screenshot folder produced by the corresponding lmt_qc_sampler.py run
+- Screenshot folder produced by the corresponding `lmt_qc_sampler.py` run
 
 **Outputs:**
 - `lmt_qc_validator_<date>.sqlite` — same table with `MANUAL_QC` column populated (1 = IN NEST, 0 = OUT OF NEST)
@@ -132,4 +131,4 @@
 **Open-source notes:**
 - The screenshot path is reconstructed as `os.path.join(screenshot_folder, row["screenshot"])`; the screenshot folder must be the exact folder produced by the corresponding lmt_qc_sampler.py run — mismatching SQLite and folder (e.g. from different runs) will cause missing-file errors
 - Saving on every label action means the output SQLite is written frequently; running from a network drive or slow storage may cause noticeable lag
-- Legacy lmt_qc_sampler.py outputs (no `QC_TYPE` column) are supported with a fallback warning but will only work correctly if the file contains assumed rows; feeding a legacy detected-only file produces an empty session
+- Legacy `lmt_qc_sampler.py` outputs (no `QC_TYPE` column) are supported with a fallback warning but will only work correctly if the file contains assumed rows; feeding a legacy detected-only file produces an empty session
