@@ -320,7 +320,7 @@ Label(root,
       ),
       font=("Arial", 10), justify=CENTER).pack(pady=5)
 
-Button(root, text="Select Script 3B SQLite (GAP_FILL_ANALYSIS)", command=select_db).pack(pady=5)
+Button(root, text="Select lmt_binary_search.py SQLite", command=select_db).pack(pady=5)
 label_db = Label(root, text="No file selected", wraplength=700)
 label_db.pack()
 
