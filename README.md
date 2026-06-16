@@ -1,4 +1,4 @@
-### Script: `1.3.lmt_qc_sampler.py`
+### Script: `1.lmt_qc_sampler.py`
 
 **Purpose:**
 - Reads raw LMT tracking detections and classifies each frame as IN NEST, OUT OF NEST, or unknown (-1) by comparing animal position against user-defined ROI coordinates.
