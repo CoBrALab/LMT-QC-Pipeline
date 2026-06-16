@@ -34,7 +34,7 @@ def _detect_qc_type(df_full):
     Determine the QC type from the QC_TYPE column.
     Returns the QC type string, or None if the column is absent (legacy output).
     If multiple distinct values are present the first non-null value is used;
-    in practice all rows from one 4B run share the same QC_TYPE.
+    in practice all rows from one lmt_qc_sampler.py run share the same QC_TYPE.
     """
     if "QC_TYPE" not in df_full.columns:
         return None
@@ -45,7 +45,7 @@ def _detect_qc_type(df_full):
 
 def load_database():
     """
-    Load QC_ASSUMED_SAMPLES from Script 4B output.
+    Load QC_ASSUMED_SAMPLES from lmt_qc_sampler.py output.
 
     Filter logic is driven by the QC_TYPE column:
       - QC_TYPE_ASSUMED   : ASSUMPTION_TYPE == "ASSUMED"  and IN_NEST in (0, 1)
@@ -284,10 +284,10 @@ def start_qc():
         messagebox.showwarning(
             "Legacy Database",
             "The selected SQLite has no QC_TYPE column.\n"
-            "This appears to be output from an older version of Script 4B.\n\n"
+            "This appears to be output from an older version of lmt_qc_sampler.py.\n\n"
             "Falling back to Assumed Rows QC filter\n"
             "(ASSUMPTION_TYPE = ASSUMED, IN_NEST in 0/1).\n\n"
-            "Re-run Script 4B with the updated version to remove this warning."
+            "Re-run lmt_qc_sampler.py with the updated version to remove this warning."
         )
 
     if len(loaded_df) == 0:
@@ -350,7 +350,7 @@ bind_keys(root)
 top_frame = Frame(root)
 top_frame.pack(pady=10)
 
-Button(top_frame, text="Select QC SQLite (Script 4B output)", command=select_database).grid(row=0, column=0, padx=10)
+Button(top_frame, text="Select lmt_qc_sampler.py SQLite output", command=select_database).grid(row=0, column=0, padx=10)
 db_label = Label(top_frame, text="No database selected", wraplength=500)
 db_label.grid(row=0, column=1)
 

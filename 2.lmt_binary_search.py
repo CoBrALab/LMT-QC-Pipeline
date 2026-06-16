@@ -255,7 +255,7 @@ def write_summary_report(report_path, source_db_path, df_all, decisions, skipped
         f.write("MISSING / ASSUMED FRAMES SUMMARY\n")
         f.write("=" * 70 + "\n\n")
         f.write(f"Total assumed frames:    {asm_total:>10,}  ({seconds_to_hms(asm_total_sec)})\n\n")
-        f.write("  Automatically classified IN NEST = 1 (Script 1B)\n")
+        f.write("  Automatically classified IN NEST = 1 (lmt_gap_fill.py)\n")
         f.write("  " + "-" * 46 + "\n")
         f.write(f"  Frames:    {auto_in_nest:>10,}  ({seconds_to_hms(auto_in_sec)})\n")
         f.write(f"  % of assumed:   {pct(auto_in_nest, asm_total):>6.1f}%\n\n")
@@ -411,7 +411,7 @@ class BinarySearchGUI:
                   "Fills ASSUMED frames where IN_NEST = -1 using binary search.\n"
                   f"Gaps \u2264 {MIN_GAP_DURATION_FOR_BINARY_SEARCH_IN_SECONDS}s are skipped "
                   f"(frames remain IN_NEST = -1).\n\n"
-                  "Reads directly from a Script 1B output SQLite.\n\n"
+                  "Reads directly from a lmt_gap_fill.py output SQLite.\n\n"
                   "Each gap always shows:  LEFT = last detected frame before gap  |  "
                   "CENTER = frame under review  |  RIGHT = first detected frame after gap\n\n"
                   "Keyboard:  A = IN NEST              D = OUT OF NEST\n"
@@ -421,7 +421,7 @@ class BinarySearchGUI:
               ),
               font=("Arial", 11), justify=LEFT).pack(pady=10)
 
-        Button(self.setup_frame, text="Select Script 1B SQLite (GAP_FILL_ANALYSIS)", command=self._select_db).pack(pady=5)
+        Button(self.setup_frame, text="Select lmt_gap_fill.py SQLite output", command=self._select_db).pack(pady=5)
         self.lbl_db = Label(self.setup_frame, text="No database selected", wraplength=1000)
         self.lbl_db.pack()
 
@@ -449,7 +449,7 @@ class BinarySearchGUI:
 
     def _start(self):
         if not self.db_path:
-            messagebox.showerror("Error", "Please select the Script 1B SQLite."); return
+            messagebox.showerror("Error", "Please select the lmt_gap_fill.py SQLite."); return
         if not self.video_paths:
             messagebox.showerror("Error", "Please select at least one LMT video."); return
         if not self.output_folder:

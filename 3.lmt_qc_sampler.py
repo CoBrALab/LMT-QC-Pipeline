@@ -94,7 +94,7 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_type, 
     screenshot_folder = os.path.join(output_folder, f"Screenshots_{slug}_{run_timestamp}")
     os.makedirs(screenshot_folder, exist_ok=True)
 
-    # Load the full GAP_FILL_ANALYSIS table produced by Script 3B 
+    # Load the full GAP_FILL_ANALYSIS table produced by lmt_binary_search.py
     conn = sqlite3.connect(analysis_db)
     df   = pd.read_sql_query("SELECT * FROM GAP_FILL_ANALYSIS ORDER BY FRAMENUMBER", conn)
     conn.close()
@@ -125,7 +125,7 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_type, 
         raise Exception(
             f"No eligible rows found for QC type '{qc_type}'.\n"
             f"Expected pool: {pool_description}.\n"
-            f"Check that the selected SQLite was produced by the updated Script 3B."
+            f"Check that the selected SQLite was produced by the updated lmt_binary_search.py."
         )
 
     if n_samples > total_available:
@@ -227,7 +227,7 @@ def select_out():
 def start():
     try:
         if not analysis_db:
-            messagebox.showerror("Error", "Please select a Script 3B SQLite.")
+            messagebox.showerror("Error", "Please select a lmt_binary_search.py SQLite.")
             return
         if not videos:
             messagebox.showerror("Error", "Please select at least one LMT video.")
@@ -313,7 +313,7 @@ Label(root, text="LMT QC Sampler",
 
 Label(root,
       text=(
-          "Randomly selects frames from the Script 3B GAP_FILL_ANALYSIS table\n"
+          "Randomly selects frames from the lmt_binary_search.py GAP_FILL_ANALYSIS table\n"
           "and extracts their screenshots for manual quality control.\n\n"
           "Select one or both QC types. Each type produces its own SQLite\n"
           "and screenshot folder, labelled with the type and a shared timestamp."
