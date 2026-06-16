@@ -10,16 +10,22 @@ from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
 
 
-# Configurable constants
+
+
+# Constants
 DB_FPS           = 30    # LMT database frame rate
 FRAME_CONVERSION = 2     # 30fps DB -> 15fps video
 
 
+
+
 # Gaps shorter than this threshold (in seconds) are skipped by binary search.
-# Their frames remain IN_NEST = -1 in the output.
+# Their frames remain IN_NEST = -1 in the output
 MIN_GAP_DURATION_FOR_BINARY_SEARCH_IN_SECONDS = 30  # seconds
 
+
 FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES = 1  # minutes
+
 
 # Helpers
 def seconds_to_hms(seconds): # Converts seconds to hh:mm:ss
@@ -28,20 +34,25 @@ def seconds_to_hms(seconds): # Converts seconds to hh:mm:ss
     secs    = int(seconds % 60)
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
+
 def seconds_to_hms_ms(seconds): # Converts seconds to hh:mm:ss.ms
     hours   = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
     secs    = seconds % 60
     return f"{hours:02d}:{minutes:02d}:{secs:05.2f}"
 
+
 def _frames_to_seconds(n_frames):
     return n_frames / DB_FPS
+
 
 def _gap_duration_seconds(gap_start_frame, gap_end_frame):
     return (gap_end_frame - gap_start_frame - 1) / DB_FPS
 
+
 def _seg_dur_min(seg_start, seg_end):
     return (seg_end - seg_start + 1) / DB_FPS / 60
+
 
 # Video helpers
 def get_start_frame(video_name):
@@ -50,6 +61,7 @@ def get_start_frame(video_name):
     except Exception:
         return None
 
+
 def get_video_frame_count(video_path):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -57,6 +69,7 @@ def get_video_frame_count(video_path):
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.release()
     return total
+
 
 def build_video_map(video_paths):
     video_map = []
@@ -70,6 +83,7 @@ def build_video_map(video_paths):
         video_map.append({"start": start, "end": end, "path": v})
     video_map.sort(key=lambda x: x["start"])
     return video_map
+
 
 def extract_frame_to_path(video_map, global_frame, out_path):
     matched_video = None
@@ -97,18 +111,22 @@ def extract_frame_to_path(video_map, global_frame, out_path):
         return True
     return False
 
+
 # Binary-search task builder
 def build_initial_tasks(df_negative, df_all):
     df_detected = df_all[df_all["ASSUMPTION_TYPE"] == "DETECTED"].copy()
     detected_frames_sorted = sorted(df_detected["FRAMENUMBER"].tolist())
 
+
     def find_boundary_left(gap_start_frame):
         candidates = [f for f in detected_frames_sorted if f <= gap_start_frame]
         return candidates[-1] if candidates else detected_frames_sorted[0]
 
+
     def find_boundary_right(gap_end_frame):
         candidates = [f for f in detected_frames_sorted if f >= gap_end_frame]
         return candidates[0] if candidates else detected_frames_sorted[-1]
+
 
     groups = (
         df_negative
@@ -121,11 +139,14 @@ def build_initial_tasks(df_negative, df_all):
     skipped_frames   = set()
     skipped_gap_keys = set()
 
+
     for idx, row in enumerate(groups.itertuples(), start=1):
         gs = int(row.GAP_START_FRAME)
         ge = int(row.GAP_END_FRAME)
 
+
         gap_dur_sec = _gap_duration_seconds(gs, ge)
+
 
         if gap_dur_sec <= MIN_GAP_DURATION_FOR_BINARY_SEARCH_IN_SECONDS:
             for f in range(gs + 1, ge):
@@ -133,14 +154,17 @@ def build_initial_tasks(df_negative, df_all):
             skipped_gap_keys.add((gs, ge))
             continue
 
+
         gap_start = gs + 1
         gap_end   = ge - 1
         if gap_start > gap_end:
             continue
         mid = (gap_start + gap_end) // 2
 
+
         boundary_left  = find_boundary_left(gs)
         boundary_right = find_boundary_right(ge)
+
 
         tasks.append({
             "gap_index":      idx,
@@ -152,12 +176,15 @@ def build_initial_tasks(df_negative, df_all):
             "boundary_right": boundary_right,
         })
 
+
     return tasks, skipped_frames, skipped_gap_keys
+
 
 # Consolidated summary report
 def write_summary_report(report_path, source_db_path, df_all, decisions, skipped_gap_keys, bsearch_in_nest_frames, bsearch_out_frames, defaulted_to_out_frames, total_review_seconds, gap_timings):
     def pct(n, total):
         return (n / total * 100) if total > 0 else 0.0
+
 
     df_det = df_all[df_all["ASSUMPTION_TYPE"] == "DETECTED"]
     det_total     = len(df_det)
@@ -167,24 +194,29 @@ def write_summary_report(report_path, source_db_path, df_all, decisions, skipped
     det_in_sec    = _frames_to_seconds(det_in_nest)
     det_out_sec   = _frames_to_seconds(det_out)
 
+
     df_asm = df_all[df_all["ASSUMPTION_TYPE"] == "ASSUMED"]
     asm_total     = len(df_asm)
     asm_total_sec = _frames_to_seconds(asm_total)
+
 
     auto_in_nest  = int((df_asm["IN_NEST"] == 1).sum())
     auto_unknown  = int((df_asm["IN_NEST"] == -1).sum())
     auto_in_sec   = _frames_to_seconds(auto_in_nest)
     auto_unk_sec  = _frames_to_seconds(auto_unknown)
 
+
     bs_in_sec          = _frames_to_seconds(bsearch_in_nest_frames)
     bs_out_sec         = _frames_to_seconds(bsearch_out_frames)
     defaulted_out_sec  = _frames_to_seconds(defaulted_to_out_frames)
+
 
     skipped_frames_count = sum(
         len(range(gs + 1, ge))
         for gs, ge in skipped_gap_keys
     )
     skipped_sec = _frames_to_seconds(skipped_frames_count)
+
 
     df_asm_work = df_all[df_all["ASSUMPTION_TYPE"] == "ASSUMED"].copy()
     gap_groups = (
@@ -197,6 +229,7 @@ def write_summary_report(report_path, source_db_path, df_all, decisions, skipped
     )
     total_gaps = len(gap_groups)
 
+
     if total_gaps > 0:
         total_gap_frames = int(gap_groups["frame_count"].sum())
         avg_gap_sec      = _frames_to_seconds(total_gap_frames / total_gaps)
@@ -204,11 +237,10 @@ def write_summary_report(report_path, source_db_path, df_all, decisions, skipped
         total_gap_frames = 0
         avg_gap_sec      = 0.0
 
+
     def gap_label(gs, ge):
         key = (gs, ge)
-        gap_frames = df_asm_work[
-            (df_asm_work["GAP_START_FRAME"] == gs) & (df_asm_work["GAP_END_FRAME"] == ge)
-        ]
+        gap_frames = df_asm_work[(df_asm_work["GAP_START_FRAME"] == gs) & (df_asm_work["GAP_END_FRAME"] == ge)]
         original_values = set(gap_frames["IN_NEST"].unique())
         if -1 not in original_values:
             return "Auto IN NEST = 1"
@@ -226,17 +258,21 @@ def write_summary_report(report_path, source_db_path, df_all, decisions, skipped
             return "Binary Search \u2192 OUT OF NEST = 0"
         return f"Binary Search \u2192 mixed ({in_nest_count} IN / {out_count} OUT)"
 
+
     with open(report_path, "w", encoding="utf-8") as f:
+
 
         f.write("LMT Pipeline Summary Report\n")
         f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"Source database: {source_db_path}\n")
         f.write("\n")
 
+
         f.write("=" * 70 + "\n")
         f.write("BINARY SEARCH REVIEW TIMING\n")
         f.write("=" * 70 + "\n\n")
         f.write(f"  Total review duration:   {seconds_to_hms(total_review_seconds)}  ({total_review_seconds:.1f}s)\n\n")
+
 
         f.write("=" * 70 + "\n")
         f.write("LMT DETECTION SUMMARY\n")
@@ -251,6 +287,7 @@ def write_summary_report(report_path, source_db_path, df_all, decisions, skipped
         f.write(f"  Frames:    {det_out:>10,}  ({seconds_to_hms(det_out_sec)})\n")
         f.write(f"  % of detected:  {pct(det_out, det_total):>6.1f}%\n\n")
 
+
         f.write("=" * 70 + "\n")
         f.write("MISSING / ASSUMED FRAMES SUMMARY\n")
         f.write("=" * 70 + "\n\n")
@@ -264,32 +301,33 @@ def write_summary_report(report_path, source_db_path, df_all, decisions, skipped
         f.write(f"  Frames:    {auto_unknown:>10,}  ({seconds_to_hms(auto_unk_sec)})\n")
         f.write(f"  % of assumed:   {pct(auto_unknown, asm_total):>6.1f}%\n\n")
 
-        #  Reconciliation check 
-        # Three outcomes sum back to auto_unknown:
-        #   IN (explicit) + OUT (all, from df_out) + skipped = starting population
-        # defaulted_to_out_frames is a sub-breakdown of bsearch_out_frames,
-        # not a separate addend.
+
         reconciled_total = bsearch_in_nest_frames + bsearch_out_frames + skipped_frames_count
         reconciliation_ok = (reconciled_total == auto_unknown)
+
 
         f.write("=" * 70 + "\n")
         f.write("BINARY SEARCH RESULTS\n")
         f.write("=" * 70 + "\n\n")
         f.write(f"  Starting population (IN_NEST = -1):  {auto_unknown:,} frames\n\n")
 
+
         f.write("  (1) Reclassified to IN NEST = 1  [binary search — explicit]\n")
         f.write("  " + "-" * 56 + "\n")
         f.write(f"  Frames:    {bsearch_in_nest_frames:>10,}  ({seconds_to_hms(bs_in_sec)})\n")
         f.write(f"  % of starting population:  {pct(bsearch_in_nest_frames, auto_unknown):>6.1f}%\n\n")
+
 
         f.write("  (2) Assigned OUT OF NEST = 0  [all OUT frames combined]\n")
         f.write("  " + "-" * 56 + "\n")
         f.write(f"  Frames:    {bsearch_out_frames:>10,}  ({seconds_to_hms(bs_out_sec)})\n")
         f.write(f"  % of starting population:  {pct(bsearch_out_frames, auto_unknown):>6.1f}%\n\n")
 
+
         explicit_out_count = bsearch_out_frames - defaulted_to_out_frames
         f.write(f"    Of which explicitly decided by binary search:\n")
         f.write(f"      Frames:  {explicit_out_count:>10,}  ({seconds_to_hms(_frames_to_seconds(explicit_out_count))})\n\n")
+
 
         f.write(f"    Of which defaulted to OUT (not explicitly decided):\n")
         f.write(f"      Frames:  {defaulted_to_out_frames:>10,}  ({seconds_to_hms(defaulted_out_sec)})\n")
@@ -302,10 +340,12 @@ def write_summary_report(report_path, source_db_path, df_all, decisions, skipped
         f.write(f"        c) Frames to the right of an OUT boundary resolved by the\n")
         f.write(f"           default-zero fallback rather than an explicit answer.\n\n")
 
+
         f.write(f"  (3) Remaining IN_NEST = -1  (gaps \u2264 {MIN_GAP_DURATION_FOR_BINARY_SEARCH_IN_SECONDS}s threshold, not searched)\n")
         f.write("  " + "-" * 56 + "\n")
         f.write(f"  Frames:    {skipped_frames_count:>10,}  ({seconds_to_hms(skipped_sec)})\n")
         f.write(f"  % of starting population:  {pct(skipped_frames_count, auto_unknown):>6.1f}%\n\n")
+
 
         f.write("  " + "-" * 56 + "\n")
         f.write(f"  Reconciliation (1) + (2) + (3):  {reconciled_total:,}")
@@ -314,15 +354,18 @@ def write_summary_report(report_path, source_db_path, df_all, decisions, skipped
         else:
             f.write(f"  \u2717 MISMATCH (expected {auto_unknown:,})\n\n")
 
+
         f.write("=" * 70 + "\n")
         f.write("GAP STATISTICS\n")
         f.write("=" * 70 + "\n\n")
         f.write(f"Total number of gaps:    {total_gaps:,}\n")
         f.write(f"Average gap duration:    {seconds_to_hms(avg_gap_sec)}\n\n")
 
+
         f.write("=" * 70 + "\n")
         f.write("GAP DETAILS\n")
         f.write("=" * 70 + "\n\n")
+
 
         col_w = [6, 13, 13, 15, 22, 18, 42]
         header = (
@@ -337,6 +380,7 @@ def write_summary_report(report_path, source_db_path, df_all, decisions, skipped
         f.write(header)
         f.write("-" * sum(col_w) + "\n")
 
+
         for i, row in enumerate(gap_groups.itertuples(), start=1):
             gs       = int(row.GAP_START_FRAME)
             ge       = int(row.GAP_END_FRAME)
@@ -344,11 +388,13 @@ def write_summary_report(report_path, source_db_path, df_all, decisions, skipped
             dur_sec  = _frames_to_seconds(n_frames)
             label    = gap_label(gs, ge)
 
+
             review_time_str = "N/A"
             for gt in gap_timings:
                 if gt["gap_start"] == gs + 1 and gt["gap_end"] == ge - 1:
                     review_time_str = seconds_to_hms(gt["duration_seconds"])
                     break
+
 
             f.write(
                 f"{i:<{col_w[0]}}"
@@ -360,7 +406,9 @@ def write_summary_report(report_path, source_db_path, df_all, decisions, skipped
                 f"{label:<{col_w[6]}}\n"
             )
 
+
         f.write("\n")
+
 
 # Main GUI class
 class BinarySearchGUI:
@@ -369,16 +417,20 @@ class BinarySearchGUI:
         self.root.title("LMT Binary Search Gap Filler")
         self.root.geometry("1600x950")
 
+
         self.db_path          = ""
         self.output_folder    = ""
         self.video_paths      = []
         self.video_map        = []
 
-        self.df               = None   # assumed rows only (for binary search logic)
-        self.df_all           = None   # ALL rows from lmt_gap_fill.py (preserved for final output)
-        self.df_neg           = None   # assumed rows with IN_NEST == -1
+
+        self.df               = None  
+        self.df_all           = None  
+        self.df_neg           = None  
+
 
         self.temp_dir         = ""
+
 
         self.task_stack       = []
         self.redo_stack       = []
@@ -388,23 +440,29 @@ class BinarySearchGUI:
         self.skipped_frames   = set()
         self.skipped_gap_keys = set()
 
+
         self._review_start_time   = None
         self._gap_start_time      = None
         self._current_gap_index   = None
         self._gap_timings         = []
 
+
         self._photo_left   = None
         self._photo_center = None
         self._photo_right  = None
 
+
         self._build_setup_ui()
 
-    #  Setup screen 
+
+    #  Setup screen
     def _build_setup_ui(self):
         self.setup_frame = Frame(self.root)
         self.setup_frame.pack(fill=BOTH, expand=True, padx=20, pady=20)
 
+
         Label(self.setup_frame, text="LMT Binary Search Gap Filler", font=("Arial", 16, "bold")).pack(pady=10)
+
 
         Label(self.setup_frame,
               text=(
@@ -416,36 +474,44 @@ class BinarySearchGUI:
                   "CENTER = frame under review  |  RIGHT = first detected frame after gap\n\n"
                   "Keyboard:  A = IN NEST              D = OUT OF NEST\n"
                   "           \u2190 = Undo last answer    \u2192 = Redo / advance\n\n"
-                  "Output: GAP_FILL_ANALYSIS table (all rows from 1B preserved, "
+                  "Output: GAP_FILL_ANALYSIS table (all rows from lmt_gap_fill.py preserved, "
                   "BINARY_SEARCH column added)"
               ),
               font=("Arial", 11), justify=LEFT).pack(pady=10)
+
 
         Button(self.setup_frame, text="Select lmt_gap_fill.py SQLite output", command=self._select_db).pack(pady=5)
         self.lbl_db = Label(self.setup_frame, text="No database selected", wraplength=1000)
         self.lbl_db.pack()
 
+
         Button(self.setup_frame, text="Select LMT Videos", command=self._select_videos).pack(pady=5)
         self.lbl_vid = Label(self.setup_frame, text="No videos selected")
         self.lbl_vid.pack()
+
 
         Button(self.setup_frame, text="Select Output Folder", command=self._select_output).pack(pady=5)
         self.lbl_out = Label(self.setup_frame, text="No output folder selected", wraplength=1000)
         self.lbl_out.pack()
 
+
         Button(self.setup_frame, text="START BINARY SEARCH", command=self._start, bg="green", fg="white", width=30, height=2).pack(pady=20)
+
 
     def _select_db(self):
         self.db_path = filedialog.askopenfilename(filetypes=[("SQLite Database", "*.sqlite")])
         self.lbl_db.config(text=self.db_path)
 
+
     def _select_videos(self):
         self.video_paths = list(filedialog.askopenfilenames(filetypes=[("MP4 Video", "*.mp4")]))
         self.lbl_vid.config(text=f"{len(self.video_paths)} video(s) selected")
 
+
     def _select_output(self):
         self.output_folder = filedialog.askdirectory()
         self.lbl_out.config(text=self.output_folder)
+
 
     def _start(self):
         if not self.db_path:
@@ -455,34 +521,44 @@ class BinarySearchGUI:
         if not self.output_folder:
             messagebox.showerror("Error", "Please select an output folder."); return
 
+
         conn = sqlite3.connect(self.db_path)
         # Load ALL rows — this is the full lmt_gap_fill.py output we will extend
         self.df_all = pd.read_sql_query("SELECT * FROM GAP_FILL_ANALYSIS ORDER BY FRAMENUMBER", conn)
         conn.close()
 
+
         # Assumed subset used for binary-search logic (unchanged from original)
         self.df = self.df_all[self.df_all["ASSUMPTION_TYPE"] == "ASSUMED"].copy().reset_index(drop=True)
+
 
         self.df_neg = self.df[self.df["IN_NEST"] == -1].copy()
         if len(self.df_neg) == 0:
             messagebox.showinfo("Nothing to do", "No frames with IN_NEST = -1 found. Nothing to fill.")
             return
 
+
         self.video_map = build_video_map(self.video_paths)
         if not self.video_map:
             messagebox.showerror("Error", "Could not parse any valid videos."); return
 
+
+        # Temporary cache for frame PNGs displayed during binary search review.
+        # Deleted automatically in _finish().
         self.temp_dir = os.path.join(self.output_folder, "_binsearch_tmp")
         os.makedirs(self.temp_dir, exist_ok=True)
+
 
         tasks, self.skipped_frames, self.skipped_gap_keys = build_initial_tasks(self.df_neg, self.df_all)
         self.task_stack   = tasks
         self.redo_stack   = []
         self.history      = []
 
+
         self.decisions    = {}
         self.current_task = None
         self._gap_timings = []
+
 
         if not self.task_stack:
             messagebox.showinfo(
@@ -493,19 +569,24 @@ class BinarySearchGUI:
             self._finish()
             return
 
+
         self._review_start_time = time.time()
+
 
         self.setup_frame.pack_forget()
         self._build_qc_ui()
         self._load_next_task()
 
-    # QC screen 
+
+    # QC screen
     def _build_qc_ui(self):
         self.qc_frame = Frame(self.root)
         self.qc_frame.pack(fill=BOTH, expand=True)
 
+
         images_frame = Frame(self.qc_frame, bg="#1a1a1a")
         images_frame.pack(side=TOP, fill=X, padx=5, pady=5)
+
 
         # Configure equal-width columns
         images_frame.grid_columnconfigure(0, weight=1, uniform="screens")
@@ -513,9 +594,11 @@ class BinarySearchGUI:
         images_frame.grid_columnconfigure(2, weight=1, uniform="screens")
         images_frame.grid_rowconfigure(0, weight=1)
 
+
         # LEFT PANEL
         left_panel = Frame(images_frame, bg="#1a1a1a")
         left_panel.grid(row=0, column=0, sticky="nsew", padx=8, pady=4)
+
 
         Label(
             left_panel,
@@ -524,6 +607,7 @@ class BinarySearchGUI:
             fg="#aaaaaa",
             bg="#1a1a1a"
         ).pack()
+
 
         self.lbl_left_frame_num = Label(
             left_panel,
@@ -534,12 +618,15 @@ class BinarySearchGUI:
         )
         self.lbl_left_frame_num.pack()
 
+
         self.img_left = Label(left_panel, bg="#1a1a1a")
         self.img_left.pack(pady=5, expand=True)
+
 
         # CENTER PANEL
         center_panel = Frame(images_frame, bg="#0d2a0d", bd=2, relief=GROOVE)
         center_panel.grid(row=0, column=1, sticky="nsew", padx=8, pady=4)
+
 
         Label(
             center_panel,
@@ -548,6 +635,7 @@ class BinarySearchGUI:
             fg="#55ff55",
             bg="#0d2a0d"
         ).pack()
+
 
         self.lbl_center_frame_num = Label(
             center_panel,
@@ -558,12 +646,15 @@ class BinarySearchGUI:
         )
         self.lbl_center_frame_num.pack()
 
+
         self.img_center = Label(center_panel, bg="#0d2a0d")
         self.img_center.pack(pady=5, expand=True)
+
 
         # RIGHT PANEL
         right_panel = Frame(images_frame, bg="#1a1a1a")
         right_panel.grid(row=0, column=2, sticky="nsew", padx=8, pady=4)
+
 
         Label(
             right_panel,
@@ -572,6 +663,7 @@ class BinarySearchGUI:
             fg="#aaaaaa",
             bg="#1a1a1a"
         ).pack()
+
 
         self.lbl_right_frame_num = Label(
             right_panel,
@@ -582,14 +674,18 @@ class BinarySearchGUI:
         )
         self.lbl_right_frame_num.pack()
 
+
         self.img_right = Label(right_panel, bg="#1a1a1a")
         self.img_right.pack(pady=5, expand=True)
+
 
         bottom = Frame(self.qc_frame)
         bottom.pack(side=BOTTOM, fill=X, padx=20, pady=8)
 
+
         info_left = Frame(bottom)
         info_left.pack(side=LEFT, anchor=W)
+
 
         self.lbl_gap_counter = Label(info_left, text="", font=("Arial", 14, "bold"))
         self.lbl_gap_counter.pack(anchor=W)
@@ -602,15 +698,19 @@ class BinarySearchGUI:
         self.lbl_answer = Label(info_left, text="", font=("Arial", 12, "bold"))
         self.lbl_answer.pack(anchor=W, pady=(6, 0))
 
+
         btn_frame = Frame(bottom)
         btn_frame.pack(side=RIGHT, anchor=E)
+
 
         Button(btn_frame, text="IN NEST  (A)", bg="green", fg="white", width=20, height=2, command=lambda: self._handle_answer(True)).grid(row=0, column=0, padx=6, pady=4)
         Button(btn_frame, text="OUT OF NEST  (D)", bg="red", fg="white", width=20, height=2, command=lambda: self._handle_answer(False)).grid(row=0, column=1, padx=6, pady=4)
         Button(btn_frame, text="◀  Undo  (Left)",  width=18, command=self._go_previous).grid(row=1, column=0, padx=6, pady=2)
         Button(btn_frame, text="Redo  (Right)  ▶", width=18, command=self._go_next).grid(row=1, column=1, padx=6, pady=2)
 
+
         Label(btn_frame, text="A = IN NEST   D = OUT   ← Undo   → Redo", font=("Arial", 9), fg="#777777").grid(row=2, column=0, columnspan=2, pady=2)
+
 
         self.root.bind("<a>",     lambda e: self._handle_answer(True))
         self.root.bind("<A>",     lambda e: self._handle_answer(True))
@@ -618,6 +718,7 @@ class BinarySearchGUI:
         self.root.bind("<D>",     lambda e: self._handle_answer(False))
         self.root.bind("<Left>",  lambda e: self._go_previous())
         self.root.bind("<Right>", lambda e: self._go_next())
+
 
     def _load_frame_into_label(self, label, frame_number, cache_key):
         frame_path = os.path.join(self.temp_dir, f"frame_{cache_key}.png")
@@ -634,6 +735,7 @@ class BinarySearchGUI:
             label.image = None
             return False
 
+
     def _refresh_display(self, task, answer_text="", answer_color="black"):
         gap_start_inner = task["gap_start"]
         gap_end_inner   = task["gap_end"]
@@ -641,24 +743,31 @@ class BinarySearchGUI:
         seg_dur_min     = _seg_dur_min(task.get("seg_start", gap_start_inner), task.get("seg_end",   gap_end_inner))
         same_gap_ahead  = sum(1 for t in self.task_stack if t["gap_index"] == task["gap_index"])
 
+
         self.lbl_gap_counter.config(text=f"Gap  {task['gap_index']}  /  {task['total_gaps']}")
         self.lbl_tasks_left.config(text=f"{same_gap_ahead} sub-task(s) remaining in this gap")
         self.lbl_gap.config(text=f"Full gap:   frame {gap_start_inner} \u2013 {gap_end_inner}  ({gap_dur_min:.1f} min)")
         self.lbl_segment.config(text=f"Segment:   frame {task.get('seg_start', gap_start_inner)} \u2013 {task.get('seg_end', gap_end_inner)}  ({seg_dur_min:.1f} min)")
         self.lbl_answer.config(text=answer_text, fg=answer_color)
 
+
         b_left  = task["boundary_left"]
         b_right = task["boundary_right"]
         mid     = task["show_frame"]
 
+
         self.lbl_left_frame_num.config(text=f"Frame {b_left}")
         self._load_frame_into_label(self.img_left, b_left, f"bl_{b_left}")
+
 
         self.lbl_center_frame_num.config(text=f"Frame {mid}")
         self._load_frame_into_label(self.img_center, mid, f"mid_{mid}")
 
+
         self.lbl_right_frame_num.config(text=f"Frame {b_right}")
         self._load_frame_into_label(self.img_right, b_right, f"br_{b_right}")
+
+
 
 
     def _load_next_task(self):
@@ -666,7 +775,9 @@ class BinarySearchGUI:
             self._finish()
             return
 
+
         incoming_task = self.task_stack[0]
+
 
         if self._current_gap_index != incoming_task["gap_index"]:
             if self._gap_start_time is not None and self._current_gap_index is not None:
@@ -681,11 +792,15 @@ class BinarySearchGUI:
                         })
                         break
 
+
             self._gap_start_time      = time.time()
             self._current_gap_index   = incoming_task["gap_index"]
 
+
         self.current_task = self.task_stack.pop(0)
         self._refresh_display(self.current_task)
+
+
 
 
     def _handle_answer(self, in_nest: bool):
@@ -693,18 +808,23 @@ class BinarySearchGUI:
         if task is None:
             return
 
+
         snapshot = copy.deepcopy(self.decisions)
         self.history.append((task, snapshot))
         self.redo_stack.clear()
+
 
         seg_start = task.get("seg_start", task["gap_start"])
         seg_end   = task.get("seg_end",   task["gap_end"])
         mid       = task["show_frame"]
 
+
         b_left  = task["boundary_left"]
         b_right = task["boundary_right"]
 
+
         seg_duration_minutes = (seg_end - seg_start + 1) / DB_FPS / 60
+
 
         if seg_duration_minutes <= FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES:
             fill_value = 1 if in_nest else 0
@@ -718,6 +838,7 @@ class BinarySearchGUI:
                 answer_color=color)
             self.root.after(300, self._load_next_task)
             return
+
 
         if in_nest:
             for f in range(seg_start, mid + 1):
@@ -742,6 +863,7 @@ class BinarySearchGUI:
                     "boundary_right": b_right,
                 })
             self.root.after(300, self._load_next_task)
+
 
         else:
             left_start = seg_start
@@ -768,6 +890,7 @@ class BinarySearchGUI:
                     self.decisions[f] = 0
             self.root.after(300, self._load_next_task)
 
+
     def _go_previous(self):
         if not self.history:
             return
@@ -791,6 +914,7 @@ class BinarySearchGUI:
             answer_text="Undone \u2014 re-answer or continue",
             answer_color="#888888")
 
+
     def _go_next(self):
         if self.redo_stack:
             redo_task, redo_decisions = self.redo_stack.pop()
@@ -809,8 +933,12 @@ class BinarySearchGUI:
                         (self.current_task, copy.deepcopy(self.decisions)))
                 self._load_next_task()
 
-    # Finish 
+
+    # Finish
     def _finish(self):
+        import shutil
+        if self.temp_dir and os.path.isdir(self.temp_dir):
+            shutil.rmtree(self.temp_dir, ignore_errors=True)
         # Close out the last gap timer.
         if self._gap_start_time is not None and self._current_gap_index is not None:
             elapsed = time.time() - self._gap_start_time
@@ -824,22 +952,27 @@ class BinarySearchGUI:
                     })
                     break
 
+
         total_review_seconds = (
             time.time() - self._review_start_time
             if self._review_start_time else 0.0
         )
+
 
         #  Build the output by working from the FULL lmt_gap_fill.py dataset ─
         # We preserve every row from df_all and apply binary-search decisions
         # only to assumed rows with IN_NEST == -1.
         df_out = self.df_all.copy()
 
+
         # Set of all frame numbers that were candidates for binary search
         # (assumed rows with original IN_NEST == -1).
         neg_frames = set(self.df_all[(self.df_all["ASSUMPTION_TYPE"] == "ASSUMED") & (self.df_all["IN_NEST"] == -1)]["FRAMENUMBER"].tolist())
 
+
         # Searchable = neg_frames minus the ones skipped due to short gap threshold
         searchable_frames = neg_frames - self.skipped_frames
+
 
         def apply_decision(row):
             """Update IN_NEST for assumed rows that were binary-searched."""
@@ -856,33 +989,35 @@ class BinarySearchGUI:
             # Binary-search result; default to 0 (OUT OF NEST) if no decision recorded
             return self.decisions.get(fn, 0)
 
+
         df_out["IN_NEST"] = df_out.apply(apply_decision, axis=1)
+
 
         # BINARY_SEARCH = 1 only for frames that were actually searched
         df_out["BINARY_SEARCH"] = df_out["FRAMENUMBER"].apply(
             lambda fn: 1 if int(fn) in searchable_frames else 0
         )
 
+
         '''
-        Compute summary stats from df_out (ground truth) 
+        Compute summary stats from df_out (ground truth)
         Using df_out rather than self.decisions ensures every frame that ended up with a value in the database is counted, including frames that were never explicitly answered and received IN_NEST=0 via the default fallback in apply_decision().
         '''
         df_searched = df_out[(df_out["ASSUMPTION_TYPE"] == "ASSUMED") &(df_out["FRAMENUMBER"].apply(lambda fn: int(fn) in searchable_frames))]
         bsearch_in_nest_frames = int((df_searched["IN_NEST"] == 1).sum())
         bsearch_out_frames     = int((df_searched["IN_NEST"] == 0).sum())
 
+
         # Explicitly-decided OUT frames (answered by the user directly)
         explicit_out = sum(
             1 for fn, val in self.decisions.items()
             if val == 0 and fn in neg_frames and fn not in self.skipped_frames
         )
-        # Defaulted-to-zero frames: in the database as OUT but never explicitly
-        # answered.  These are the frames that make bsearch_out_frames >
-        # explicit_out, and are the source of the reconciliation gap reported
-        # in previous versions.
+        # Defaulted-to-zero frames: in the database as OUT but never explicitly answered.
         defaulted_to_out_frames = bsearch_out_frames - explicit_out
 
-        # Write output SQLite 
+
+        # Write output SQLite
         # Table name is GAP_FILL_ANALYSIS it matches lmt_gap_fill.py for consistency.
         timestamp  = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         out_sqlite = os.path.join(self.output_folder, f"lmt_binary_search_{timestamp}.sqlite")
@@ -891,7 +1026,9 @@ class BinarySearchGUI:
         conn.close()
 
 
-        #  Write summary report 
+
+
+        #  Write summary report
         report_path = os.path.join(self.output_folder, f"LMT_Summary_{timestamp}.txt")
         write_summary_report(
             report_path,
@@ -908,9 +1045,7 @@ class BinarySearchGUI:
 
 
         # Count remaining unknowns (only in assumed rows)
-        neg_remaining = int(
-            (df_out[df_out["ASSUMPTION_TYPE"] == "ASSUMED"]["IN_NEST"] == -1).sum()
-        )
+        neg_remaining = int((df_out[df_out["ASSUMPTION_TYPE"] == "ASSUMED"]["IN_NEST"] == -1).sum())
 
 
         messagebox.showinfo(
@@ -925,16 +1060,21 @@ class BinarySearchGUI:
             f"  Skipped (below threshold):     {len(self.skipped_frames):,}\n\n"
             f"Remaining IN_NEST = -1:          {neg_remaining:,}\n\n"
             f"Total rows in output:            {len(df_out):,}\n"
-            f"  (detected + assumed, all preserved from 1B)\n\n"
+            f"  (detected + assumed, all preserved from lmt_gap_fill.py)\n\n"
             f"SQLite output:\n{out_sqlite}\n\n"
             f"Summary report:\n{report_path}\n\n"
-            f"Feed the SQLite into Script 4B."
+            f"Feed the SQLite into lmt_qc_sampler.py."
         )
         self.root.quit()
+
 
 if __name__ == "__main__":
     from PIL import Image, ImageTk
     root = Tk()
     app  = BinarySearchGUI(root)
     root.mainloop()
+
+
+
+
 
