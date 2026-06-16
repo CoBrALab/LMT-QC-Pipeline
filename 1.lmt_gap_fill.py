@@ -189,4 +189,3 @@ label_output.pack()
 Button(root, text="RUN ANALYSIS", command=start, bg="green", fg="white", width=25, height=2).pack(pady=20)
 
 root.mainloop()
-m
