@@ -21,21 +21,6 @@ MIN_GAP_DURATION_FOR_BINARY_SEARCH_IN_SECONDS = 30  # seconds
 
 FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES = 1  # minutes
 
-
-# Schema note
-# Output table: GAP_FILL_ANALYSIS  (matches the table name from Script 1B)
-# Columns (all original 1B columns plus one new column):
-#   FRAMENUMBER       – frame number (int)
-#   IN_NEST           – 1 = in nest, 0 = not in nest, -1 = unknown/assumed
-#   ASSUMPTION_TYPE   – "DETECTED" or "ASSUMED"
-#   GAP_START_FRAME   – start of the gap this row belongs to (NULL for detected)
-#   GAP_END_FRAME     – end of the gap this row belongs to (NULL for detected)
-#   BINARY_SEARCH     – 1 if binary search was performed on this row, 0 otherwise
-#
-# All rows from the Script 1B output are preserved.  Detected rows receive BINARY_SEARCH = 0. Assumed rows that were within a gap long enough to be
-# searched receive BINARY_SEARCH = 1; rows in gaps below the threshold remain
-# BINARY_SEARCH = 0 (and their IN_NEST stays -1).
-
 # Helpers
 def seconds_to_hms(seconds): # Converts seconds to hh:mm:ss
     hours   = int(seconds // 3600)
@@ -390,7 +375,7 @@ class BinarySearchGUI:
         self.video_map        = []
 
         self.df               = None   # assumed rows only (for binary search logic)
-        self.df_all           = None   # ALL rows from 1B (preserved for final output)
+        self.df_all           = None   # ALL rows from lmt_gap_fill.py (preserved for final output)
         self.df_neg           = None   # assumed rows with IN_NEST == -1
 
         self.temp_dir         = ""
@@ -471,7 +456,7 @@ class BinarySearchGUI:
             messagebox.showerror("Error", "Please select an output folder."); return
 
         conn = sqlite3.connect(self.db_path)
-        # Load ALL rows — this is the full 1B output we will extend
+        # Load ALL rows — this is the full lmt_gap_fill.py output we will extend
         self.df_all = pd.read_sql_query("SELECT * FROM GAP_FILL_ANALYSIS ORDER BY FRAMENUMBER", conn)
         conn.close()
 
@@ -844,7 +829,7 @@ class BinarySearchGUI:
             if self._review_start_time else 0.0
         )
 
-        #  Build the output by working from the FULL 1B dataset ─
+        #  Build the output by working from the FULL lmt_gap_fill.py dataset ─
         # We preserve every row from df_all and apply binary-search decisions
         # only to assumed rows with IN_NEST == -1.
         df_out = self.df_all.copy()
@@ -862,7 +847,7 @@ class BinarySearchGUI:
                 # Detected rows are never modified
                 return row["IN_NEST"]
             if row["IN_NEST"] != -1:
-                # Assumed rows already classified by Script 1B (IN_NEST = 1)
+                # Assumed rows already classified by lmt_gap_fill.py (IN_NEST = 1)
                 return row["IN_NEST"]
             fn = int(row["FRAMENUMBER"])
             if fn in self.skipped_frames:
@@ -898,7 +883,7 @@ class BinarySearchGUI:
         defaulted_to_out_frames = bsearch_out_frames - explicit_out
 
         # Write output SQLite 
-        # Table name is GAP_FILL_ANALYSIS — matches Script 1B for consistency.
+        # Table name is GAP_FILL_ANALYSIS it matches lmt_gap_fill.py for consistency.
         timestamp  = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         out_sqlite = os.path.join(self.output_folder, f"lmt_binary_search_{timestamp}.sqlite")
         conn = sqlite3.connect(out_sqlite)

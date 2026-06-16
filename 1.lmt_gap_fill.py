@@ -78,8 +78,8 @@ def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_
                     "FRAMENUMBER":     frame,
                     "IN_NEST":         in_nest_value,
                     "ASSUMPTION_TYPE": "ASSUMED",
-                    "GAP_START_FRAME": f1, # the value that we mention for GAP_START_FRAME is the last detected frame before gap begins
-                    "GAP_END_FRAME":   f2, # the value that we mention for GAP_END_FRAME is the first detected frame after gap ends
+                    "GAP_START_FRAME": f1, # the value that we mention for GAP_START_FRAME is the last detected frame BEFORE gap begins
+                    "GAP_END_FRAME":   f2, # the value that we mention for GAP_END_FRAME is the first detected frame AFTER gap ends
                 })
                 assumed_rows += 1
 
@@ -189,4 +189,4 @@ label_output.pack()
 Button(root, text="RUN ANALYSIS", command=start, bg="green", fg="white", width=25, height=2).pack(pady=20)
 
 root.mainloop()
-
+m

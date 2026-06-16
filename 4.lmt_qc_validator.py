@@ -6,7 +6,7 @@ from tkinter import *
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
 
-# QC type constants  (must match the values written by Script 4B)
+# QC type constants  (must match the values written by lmt_qc_sampler.py)
 QC_TYPE_ASSUMED  = "Assumed Rows QC"
 QC_TYPE_DETECTED = "LMT Detected QC"
 
@@ -16,14 +16,13 @@ QC_TYPE_DETECTED = "LMT Detected QC"
 #   0           = OUT OF NEST
 #
 # Rows with IN_NEST = -1 are excluded from QC regardless of mode.
-# The QC_TYPE column (written by Script 4B) controls which ASSUMPTION_TYPE
+# The QC_TYPE column (written by lmt_qc_sampler.py) controls which ASSUMPTION_TYPE
 # filter is applied when loading the database:
 #   "Assumed Rows QC"   -> ASSUMPTION_TYPE == "ASSUMED"
 #   "LMT Detected QC"  -> ASSUMPTION_TYPE == "DETECTED"
 #   (absent / legacy)   -> falls back to ASSUMED-only with a warning
 
 # Global state
-
 qc_db_path        = ""
 screenshot_folder = ""
 df                = None
@@ -62,7 +61,7 @@ def load_database():
     df_full  = pd.read_sql_query("SELECT * FROM QC_ASSUMED_SAMPLES", conn)
     conn.close()
 
-    # Ensure BINARY_SEARCH column exists (backward-compat) 
+    # Ensure BINARY_SEARCH column exists 
     if "BINARY_SEARCH" not in df_full.columns:
         df_full["BINARY_SEARCH"] = 0
 
@@ -75,7 +74,6 @@ def load_database():
     elif qc_type == QC_TYPE_ASSUMED:
         assumption_filter = "ASSUMED"
     else:
-        # Legacy 4B output has no QC_TYPE column — apply original assumed filter
         assumption_filter = "ASSUMED"
         legacy_fallback   = True
 
@@ -99,14 +97,6 @@ def calculate_metrics():
     completed_df = df[df["MANUAL_QC"].notna()].copy()
     if len(completed_df) == 0:
         return None
-
-    # Two-class confusion matrix:
-    #   Positive class = IN NEST  (IN_NEST == 1)
-    #   Negative class = OUT OF NEST  (IN_NEST == 0)
-    #
-    # Valid for both QC types:
-    #   Assumed Rows QC : IN_NEST is the binary-search / 1B classification
-    #   LMT Detected QC : IN_NEST is the LMT detector classification
 
     predicted_in  = completed_df[completed_df["IN_NEST"] == 1]
     tp = len(predicted_in[predicted_in["MANUAL_QC"] == 1])
@@ -301,7 +291,6 @@ def start_qc():
         )
 
     if len(loaded_df) == 0:
-        # Build a context-appropriate message
         if qc_type == QC_TYPE_DETECTED:
             filter_desc = "ASSUMPTION_TYPE = DETECTED and IN_NEST in (0, 1)"
         else:

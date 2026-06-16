@@ -13,39 +13,7 @@ FRAME_CONVERSION = 2    # 30fps DB -> 15fps video
 QC_TYPE_ASSUMED  = "Assumed Rows QC"
 QC_TYPE_DETECTED = "LMT Detected QC"
 
-# Slug used in folder and file names (no spaces)
 QC_TYPE_SLUG = {QC_TYPE_ASSUMED:  "Assumed", QC_TYPE_DETECTED: "Detected",}
-
-# Schema note
-# Reads from: Script 3B output — table GAP_FILL_ANALYSIS
-#   Columns used: FRAMENUMBER, IN_NEST, ASSUMPTION_TYPE, GAP_START_FRAME, GAP_END_FRAME, BINARY_SEARCH
-#
-# Writes one SQLite per selected QC type:
-#   lmt_qc_sampler_Assumed_<timestamp>.sqlite
-#   lmt_qc_sampler_Detected_<timestamp>.sqlite
-#
-# Each SQLite contains table QC_ASSUMED_SAMPLES with columns:
-#     sample_id       – sequential counter (int)
-#     animal_id       – as entered by user (int)
-#     video           – source video filename (str)
-#     frame_global    – FRAMENUMBER from source table (int)
-#     IN_NEST         – carried through from source (int: 0 or 1)
-#     ASSUMPTION_TYPE – carried through from source ("DETECTED" or "ASSUMED")
-#     GAP_START_FRAME – carried through (int or NULL)
-#     GAP_END_FRAME   – carried through (int or NULL)
-#     BINARY_SEARCH   – carried through from source (int: 0 or 1)
-#                       For detected rows this is always 0.
-#                       For older 3B outputs lacking this column, defaults to 0.
-#     screenshot      – screenshot filename (str)
-#     QC_TYPE         – QC mode: "Assumed Rows QC" or "LMT Detected QC"
-#                       Stored so Script 5B can apply the correct filter logic.
-#
-# Screenshots are written to a dedicated subfolder per run:
-#   Screenshots_Assumed_<timestamp>/
-#   Screenshots_Detected_<timestamp>/
-#
-# Running both types in one session produces two separate SQLites and two
-# separate screenshot folders, so neither overwrites the other.
 
 # Video helpers
 def get_start_frame(video_name):
@@ -133,8 +101,7 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_type, 
 
     if len(df) == 0:
         raise Exception("No GAP_FILL_ANALYSIS rows found in the selected SQLite.")
-
-    # Backward-compat: older 3B outputs may lack the BINARY_SEARCH column
+    
     if "BINARY_SEARCH" not in df.columns:
         df["BINARY_SEARCH"] = 0
 
