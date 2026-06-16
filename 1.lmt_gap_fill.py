@@ -107,7 +107,7 @@ def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_
     output_df.to_sql("GAP_FILL_ANALYSIS", conn, if_exists="replace", index=False)
     conn.close()
 
-    messagebox.showinfo(f"Gap Fill Analysis Complete\n\nSQLite Output:\n{output_sqlite}\n\n")
+    messagebox.showinfo(f"Gap Fill Analysis Complete")
 
 # GUI
 input_db_path      = ""
