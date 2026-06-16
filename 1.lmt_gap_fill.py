@@ -107,7 +107,19 @@ def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_
     output_df.to_sql("GAP_FILL_ANALYSIS", conn, if_exists="replace", index=False)
     conn.close()
 
-    messagebox.showinfo(f"Gap Fill Analysis Complete")
+    detected_not_in_nest_frames = detected_rows - detected_in_nest_frames
+
+    messagebox.showinfo(
+        "Analysis Complete",
+        f"Gap Fill Analysis Complete\n\n"
+        f"Detected Frames:     {detected_rows:,}\n"
+        f"  - IN NEST:         {detected_in_nest_frames:,}\n"
+        f"  - NOT IN NEST:     {detected_not_in_nest_frames:,}\n\n"
+        f"Assumed Frames:      {assumed_rows:,}\n"
+        f"Total Frames:        {len(output_df):,}\n\n"
+        f"SQLite Output:\n{output_sqlite}\n\n"
+    )
+
 
 # GUI
 input_db_path      = ""
