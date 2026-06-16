@@ -164,7 +164,7 @@ def show_sample():
         panel_frame.pack_forget()
         single_image_frame.pack(fill=X, pady=(0, 4))
         img = Image.open(image_path)
-        img.thumbnail((860, 480))
+        img.thumbnail((380, 300))
         photo = ImageTk.PhotoImage(img)
         image_label.config(image=photo)
         image_label.image = photo
