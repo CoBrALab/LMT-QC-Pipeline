@@ -1,0 +1,54 @@
+def split_database_by_frame(input_db, output_db, start_frame, end_frame):
+    import sqlite3
+    
+    conn_in = sqlite3.connect(input_db)
+    conn_out = sqlite3.connect(output_db)
+    
+    c_in = conn_in.cursor()
+    c_out = conn_out.cursor()
+    
+    # Get tables
+    c_in.execute("""SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';""")
+    tables = [row[0] for row in c_in.fetchall()]
+
+    
+    for table in tables:
+        print(f"Processing table: {table}")
+        
+        # Recreate table
+        c_in.execute(f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{table}';")
+        create_stmt = c_in.fetchone()[0]
+        c_out.execute(create_stmt)
+        
+        # Check columns
+        c_in.execute(f"PRAGMA table_info({table});")
+        columns = [col[1] for col in c_in.fetchall()]
+        
+        if "FRAMENUMBER" in columns:
+            query = f"""
+                SELECT * FROM {table}
+                WHERE FRAMENUMBER BETWEEN ? AND ?
+            """
+            rows = c_in.execute(query, (start_frame, end_frame))
+        else:
+            rows = c_in.execute(f"SELECT * FROM {table}")
+        
+        placeholders = ",".join(["?"] * len(columns))
+        insert_query = f"INSERT INTO {table} VALUES ({placeholders})"
+        
+        for row in rows:
+            c_out.execute(insert_query, row)
+        
+        conn_out.commit()
+    
+    conn_in.close()
+    conn_out.close()
+
+split_database_by_frame(
+###placeholder_input,
+###placeholder_output,
+###placeholder_start_frame,
+###placeholder_end_frame
+)
+    
+    print(f"Created {output_db}")
