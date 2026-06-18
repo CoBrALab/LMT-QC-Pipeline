@@ -141,7 +141,7 @@
             - `BINARY_SEARCH`
             - `screenshot`
             - `QC_TYPE`
-            - `MANUAL_QC` (0 (Out of nest) / 1 (In nest) / NaN (Not yet labelled) )
+            - `MANUAL_QC` (0 (Out of nest) / 1 (In nest) / NaN (Not yet labelled))
 - `lmt_qc_validator_<date>.txt` 
 
 **Do NOT modify:**
