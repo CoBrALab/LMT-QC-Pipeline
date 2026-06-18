@@ -417,20 +417,16 @@ class BinarySearchGUI:
         self.root.title("LMT Binary Search Gap Filler")
         self.root.geometry("1600x950")
 
-
         self.db_path          = ""
         self.output_folder    = ""
         self.video_paths      = []
         self.video_map        = []
 
-
         self.df               = None  
         self.df_all           = None  
         self.df_neg           = None  
 
-
         self.temp_dir         = ""
-
 
         self.task_stack       = []
         self.redo_stack       = []
@@ -440,17 +436,14 @@ class BinarySearchGUI:
         self.skipped_frames   = set()
         self.skipped_gap_keys = set()
 
-
         self._review_start_time   = None
         self._gap_start_time      = None
         self._current_gap_index   = None
         self._gap_timings         = []
 
-
         self._photo_left   = None
         self._photo_center = None
         self._photo_right  = None
-
 
         self._build_setup_ui()
 
@@ -460,9 +453,7 @@ class BinarySearchGUI:
         self.setup_frame = Frame(self.root)
         self.setup_frame.pack(fill=BOTH, expand=True, padx=20, pady=20)
 
-
         Label(self.setup_frame, text="LMT Binary Search Gap Filler", font=("Arial", 16, "bold")).pack(pady=10)
-
 
         Label(self.setup_frame,
               text=(
@@ -479,21 +470,17 @@ class BinarySearchGUI:
               ),
               font=("Arial", 11), justify=LEFT).pack(pady=10)
 
-
         Button(self.setup_frame, text="Select lmt_gap_fill.py SQLite output", command=self._select_db).pack(pady=5)
         self.lbl_db = Label(self.setup_frame, text="No database selected", wraplength=1000)
         self.lbl_db.pack()
-
 
         Button(self.setup_frame, text="Select LMT Videos", command=self._select_videos).pack(pady=5)
         self.lbl_vid = Label(self.setup_frame, text="No videos selected")
         self.lbl_vid.pack()
 
-
         Button(self.setup_frame, text="Select Output Folder", command=self._select_output).pack(pady=5)
         self.lbl_out = Label(self.setup_frame, text="No output folder selected", wraplength=1000)
         self.lbl_out.pack()
-
 
         Button(self.setup_frame, text="START BINARY SEARCH", command=self._start, bg="green", fg="white", width=30, height=2).pack(pady=20)
 
