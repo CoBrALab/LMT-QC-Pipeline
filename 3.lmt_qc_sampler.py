@@ -10,7 +10,7 @@ from tkinter import filedialog, messagebox
 DB_FPS           = 30
 FRAME_CONVERSION = 2
 
-# QC mode constants  (stored in QC_MODE column — Script 5B reads this)
+# QC mode constants  (stored in QC_MODE column — 4.lmt_qc_validator.py reads this)
 QC_MODE_DETECTED      = "DETECTED"
 QC_MODE_BINARY_SEARCH = "BINARY_SEARCH"
 QC_MODE_LOGIC         = "LOGIC"
@@ -80,13 +80,13 @@ def filter_pool(df_full, qc_mode):
                     (no IN_NEST restriction; detector always produces 0 or 1)
 
     BINARY_SEARCH : ASSUMPTION_TYPE == "ASSUMED"
-                    AND FILL_SOURCE == "BINARY_SEARCH"  (new column from Script 3B)
+                    AND FILL_SOURCE == "BINARY_SEARCH"  (new column from 2.lmt_binary_search.py)
                     AND IN_NEST in (0, 1)                (exclude residual -1)
                     Falls back to BINARY_SEARCH == 1 if FILL_SOURCE column is absent
-                    (backward compat with old Script 3B outputs).
+                    (backward compat with old 2.lmt_binary_search.py outputs).
 
     LOGIC         : ASSUMPTION_TYPE == "ASSUMED"
-                    AND FILL_SOURCE == "LOGIC"           (new column from Script 3B)
+                    AND FILL_SOURCE == "LOGIC"           (new column from 2.lmt_binary_search.py)
                     AND IN_NEST in (0, 1)
                     Falls back to BINARY_SEARCH == 0 and IN_NEST in (0,1) if absent.
     """
@@ -132,7 +132,7 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
     os.makedirs(screenshot_folder, exist_ok=True)
 
     conn    = sqlite3.connect(analysis_db)
-    # Read from GAP_FILL_ANALYSIS (Script 3B output); fall back to legacy
+    # Read from GAP_FILL_ANALYSIS (2.lmt_binary_search.py output); fall back to legacy
     # ASSUMED_FRAMES table for backward compatibility with old outputs.
     cursor  = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='GAP_FILL_ANALYSIS'")
@@ -146,7 +146,7 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
     df, mode_label = filter_pool(df_full, qc_mode)
 
     if len(df) == 0:
-        raise Exception(f"No eligible rows found for pool '{mode_label}'.\nCheck that the selected SQLite was produced by Script 3B.")
+        raise Exception(f"No eligible rows found for pool '{mode_label}'.\nCheck that the selected SQLite was produced by 2.lmt_binary_search.py.")
 
     total_available = len(df)
 
@@ -192,7 +192,7 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
             "GAP_START_FRAME": row.get("GAP_START_FRAME"),
             "GAP_END_FRAME":   row.get("GAP_END_FRAME"),
             "screenshot":      screenshot_name,
-            # QC_MODE is read by Script 5B to determine display/metrics context
+            # QC_MODE is read by 4.lmt_qc_validator.py to determine display/metrics context
             "QC_MODE":         qc_mode,
         })
         counter += 1
@@ -200,7 +200,7 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
     if not results:
         raise Exception("No screenshots could be extracted. Check that the videos cover the sampled frame numbers.")
 
-    out_db = os.path.join(pool_folder, f"Script4B_{qc_mode}_{timestamp}.sqlite")
+    out_db = os.path.join(pool_folder, f"lmt_qc_sampler_{qc_mode}_{timestamp}.sqlite")
 
     conn = sqlite3.connect(out_db)
     pd.DataFrame(results).to_sql("QC_ASSUMED_SAMPLES", conn, if_exists="replace", index=False)
@@ -237,7 +237,7 @@ def select_out():
 def start():
     try:
         if not analysis_db:
-            messagebox.showerror("Error", "Please select a Script 3B SQLite.")
+            messagebox.showerror("Error", "Please select a 2.lmt_binary_search.py SQLite.")
             return
         if not videos:
             messagebox.showerror("Error", "Please select at least one LMT video.")
@@ -302,7 +302,7 @@ Label(root,
       text=("Randomly selects frames from one of three pools and extracts screenshots.\nPools: (1) LMT-detected   (2) Binary-search-filled   (3) Logic-filled"),
       font=("Arial", 10), justify=CENTER).pack(pady=5)
 
-Button(root, text="Select Script 3B SQLite (ASSUMED_FRAMES)", command=select_db).pack(pady=5)
+Button(root, text="Select 2.lmt_binary_search.py SQLite (ASSUMED_FRAMES)", command=select_db).pack(pady=5)
 label_db = Label(root, text="No file selected", wraplength=700)
 label_db.pack()
 

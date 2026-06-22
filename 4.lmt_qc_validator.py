@@ -7,11 +7,11 @@ from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
 
 
-# QC mode constants  (must match Script 4B)
+# QC mode constants  (must match 3.lmt_qc_sampler.py)
 QC_MODE_DETECTED      = "DETECTED"
 QC_MODE_BINARY_SEARCH = "BINARY_SEARCH"
 QC_MODE_LOGIC         = "LOGIC"
-# Backward-compat alias (old Script 4B outputs wrote "ASSUMED")
+# Backward-compat alias (old 3.lmt_qc_sampler.py outputs wrote "ASSUMED")
 QC_MODE_ASSUMED       = "ASSUMED"
 
 
@@ -27,7 +27,7 @@ QC_MODE_ASSUMED       = "ASSUMED"
 #   All DETECTED rows are eligible; IN_NEST is always 0 or 1.
 #
 # Backward compatibility:
-#   Old Script 4B outputs have no QC_MODE column; they default to ASSUMED.
+#   Old 3.lmt_qc_sampler.py outputs have no QC_MODE column; they default to ASSUMED.
 
 # Global state
 qc_db_path        = ""
@@ -39,7 +39,7 @@ active_qc_mode    = QC_MODE_ASSUMED   # resolved after load
 # Database helpers
 def load_database():
     """
-    Load QC_ASSUMED_SAMPLES from a Script 4B output.
+    Load QC_ASSUMED_SAMPLES from a 3.lmt_qc_sampler.py output.
 
     Reads QC_MODE from the first row (if present) to determine which filter
     to apply.  Falls back to ASSUMED for backward compatibility with old outputs
@@ -103,7 +103,7 @@ def load_database():
 
 def save_database():
     date_string = datetime.now().strftime("%Y-%m-%d")
-    output_db   = os.path.join(screenshot_folder, f"Script5B_{date_string}.sqlite")
+    output_db   = os.path.join(screenshot_folder, f"lmt_qc_validator_{date_string}.sqlite")
     conn        = sqlite3.connect(output_db)
     df.to_sql("QC_ASSUMED_SAMPLES", conn, if_exists="replace", index=False)
     conn.close()
@@ -263,7 +263,7 @@ def next_sample():
         )
 
         date_string = datetime.now().strftime("%Y-%m-%d")
-        report_file = os.path.join(screenshot_folder, f"Script5B_{date_string}.txt")
+        report_file = os.path.join(screenshot_folder, f"lmt_qc_validator_{date_string}.txt")
 
         with open(report_file, "w") as f:
             f.write("LMT QC Validation Report\n\n")
@@ -390,7 +390,7 @@ bind_keys(root)
 top_frame = Frame(root)
 top_frame.pack(pady=10)
 
-Button(top_frame, text="Select QC SQLite (Script 4B output)", command=select_database).grid(row=0, column=0, padx=10)
+Button(top_frame, text="Select QC SQLite (3.lmt_qc_sampler.py output)", command=select_database).grid(row=0, column=0, padx=10)
 db_label = Label(top_frame, text="No database selected", wraplength=500)
 db_label.grid(row=0, column=1)
 

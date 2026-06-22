@@ -110,7 +110,7 @@
 
 **Outputs:**
 - Per selected type:
-    - `lmt_qc_sampler_<slug>_<timestamp>.sqlite`
+    - `lmt_qc_sampler_<qc_mode>_<timestamp>.sqlite`
         - Table `QC_ASSUMED_SAMPLES`
             - Columns
                 - `sample_id`
@@ -140,7 +140,7 @@
 ### Script: `4.lmt_qc_validator.py`
 
 **Purpose:**
-- Loads QC_ASSUMED_SAMPLES from `lmt_qc_sampler_<slug>_<timestamp>.sqlite`; reads QC_MODE from the first row to determine which filter and display context to apply
+- Loads QC_ASSUMED_SAMPLES from `lmt_qc_sampler_<qc_mode>_<timestamp>.sqlite`; reads QC_MODE from the first row to determine which filter and display context to apply
 - Filters eligible rows by pool:
     - `DETECTED`: `ASSUMPTION_TYPE == "DETECTED"`
     - `BINARY_SEARCH`: `ASSUMPTION_TYPE == "ASSUMED"` AND `FILL_SOURCE == "BINARY_SEARCH"` AND `IN_NEST in (0, 1)`
@@ -152,8 +152,8 @@
 - Navigation: Previous (←) and Next (→) allow free movement; labelling with A or D does not auto-advance
 
 **Inputs:**
-- `lmt_qc_sampler_<slug>_<timestamp>.sqlite` 
-- `Screenshots_<slug>_<timestamp>`
+- `lmt_qc_sampler_<qc_mode>_<timestamp>.sqlite` 
+- `Screenshots_<qc_mode>_<timestamp>`
 
 **Outputs:**
 - `lmt_qc_validator_<date>.sqlite`
