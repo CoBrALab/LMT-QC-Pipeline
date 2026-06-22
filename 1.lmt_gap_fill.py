@@ -168,7 +168,7 @@ label_db = Label(root, text="No database selected", wraplength=700)
 label_db.pack(pady=5)
 
 Label(root, text="Animal ID").pack()
-entry_animal = Entry(root); entry_animal.insert(0, "3"); entry_animal.pack()
+entry_animal = Entry(root); entry_animal.insert(0, "1"); entry_animal.pack()
 
 Label(root, text="Nest X Minimum").pack()
 entry_nest_xmin = Entry(root); entry_nest_xmin.insert(0, "200"); entry_nest_xmin.pack()
