@@ -14,6 +14,7 @@ DB_FPS           = 30    # LMT database frame rate
 FRAME_CONVERSION = 2     # 30fps DB -> 15fps video
 
 MIN_GAP_DURATION_FOR_BINARY_SEARCH = 30  # seconds
+FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES = 1 # minutes
 
 GAP_TYPE_10 = "10"
 GAP_TYPE_01 = "01"
@@ -918,7 +919,7 @@ class BinarySearchGUI:
             }
 
         #  Short segment: fill entirely 
-        if seg_duration_minutes <= 1:
+        if seg_duration_minutes <= FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES:
             fill_value = 1 if in_nest else 0
             for f in range(seg_start, seg_end + 1):
                 self.decisions[f] = fill_value
