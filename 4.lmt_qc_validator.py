@@ -294,14 +294,14 @@ def next_sample():
                 for s in fp_files:
                     f.write(f"  {s}\n")
             else:
-                f.write("  none\n")
+                f.write("  None\n")
 
             f.write("\nFalse Negative Screenshots (predicted OUT, human: IN NEST)\n\n")
             if fn_files:
                 for s in fn_files:
                     f.write(f"  {s}\n")
             else:
-                f.write("  none\n")
+                f.write("  None\n")
 
         def _fmt_file_list(files, label):
             if not files:
@@ -390,7 +390,7 @@ bind_keys(root)
 top_frame = Frame(root)
 top_frame.pack(pady=10)
 
-Button(top_frame, text="Select QC SQLite (3.lmt_qc_sampler.py output)", command=select_database).grid(row=0, column=0, padx=10)
+Button(top_frame, text="Select lmt_qc_sampler_<qc_mode>_<timestamp>.sqlite", command=select_database).grid(row=0, column=0, padx=10)
 db_label = Label(top_frame, text="No database selected", wraplength=500)
 db_label.grid(row=0, column=1)
 

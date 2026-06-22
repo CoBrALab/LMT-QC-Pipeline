@@ -237,7 +237,7 @@ def select_out():
 def start():
     try:
         if not analysis_db:
-            messagebox.showerror("Error", "Please select a 2.lmt_binary_search.py SQLite.")
+            messagebox.showerror("Error", "Please select lmt_binary_search_<date>.sqlite.")
             return
         if not videos:
             messagebox.showerror("Error", "Please select at least one LMT video.")
@@ -299,10 +299,13 @@ Label(root, text="LMT Random QC Sampler",
       font=("Arial", 16, "bold")).pack(pady=10)
 
 Label(root,
-      text=("Randomly selects frames from one of three pools and extracts screenshots.\nPools: (1) LMT-detected   (2) Binary-search-filled   (3) Logic-filled"),
+      text=("Randomly selects frames from the lmt_gap_fill_<date>.sqlite GAP_FILL_ANALYSIS table\n"
+          "and extracts their screenshots for manual quality control.\n\n"
+          "Select QC pool(s). Each type produces its own SQLite\n"
+          "and screenshot folder, labelled with the type and a shared timestamp."),
       font=("Arial", 10), justify=CENTER).pack(pady=5)
 
-Button(root, text="Select 2.lmt_binary_search.py SQLite (ASSUMED_FRAMES)", command=select_db).pack(pady=5)
+Button(root, text="Select lmt_binary_search_<date>.sqlite", command=select_db).pack(pady=5)
 label_db = Label(root, text="No file selected", wraplength=700)
 label_db.pack()
 
