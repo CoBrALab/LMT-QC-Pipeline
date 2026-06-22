@@ -986,6 +986,9 @@ class BinarySearchGUI:
 
     #  Finish 
     def _finish(self):
+        import shutil
+        if self.temp_dir and os.path.isdir(self.temp_dir):
+            shutil.rmtree(self.temp_dir, ignore_errors=True)
         #  Close last gap timer 
         if self._gap_start_time is not None and self._current_gap_index is not None:
             elapsed = time.time() - self._gap_start_time
