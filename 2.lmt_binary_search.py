@@ -157,12 +157,9 @@ def build_initial_tasks(df_negative, df_all):
                 skipped_frames.add(f)
             zero_zero_gap_keys.add((gs, ge))
             continue
-
+        
         # Type 11: animal was in-nest on both sides → skip (logic-filled) 
-        # 1.lmt_gap_fill.py should have already marked these frames IN_NEST=1, but if
-        # any -1 frames appear here they belong to type-11 gaps and are also
-        # not binary-searched (they will default to OUT=0 like other skipped
-        # frames, though in practice 1.lmt_gap_fill.py should prevent this).
+        # 1.lmt_gap_fill.py should have already marked these frames IN_NEST=1, but if any -1 frames appear here they belong to type-11 gaps and are also not binary-searched (they will default to OUT=0 like other skipped frames, though in practice 1.lmt_gap_fill.py should prevent this).
         if gtype == GAP_TYPE_11:
             for f in range(gs + 1, ge):
                 skipped_frames.add(f)
@@ -254,15 +251,9 @@ def write_summary_report(report_path, source_db_path,
         dec  = decimal_hours(secs)
         return f"{n_frames:,}", seconds_to_hms(secs), f"{dec:.3f}"
 
-    # 0.  BUILD COMPLETE GAP TYPE MAP
-    # gap_type_map from build_initial_tasks only covers gaps that had -1 frames.
-    # Logic-filled gaps (IN_NEST=1) never entered build_initial_tasks, so they
-    # would cause "??" in the report.  We merge with a full classification here.
-
-    
+    # 0.  BUILD COMPLETE GAP TYPE MAP    
     full_gap_type_map = build_full_gap_type_map(df_all)
-    # build_initial_tasks classifications take precedence (same values anyway,
-    # but kept explicit for auditability).
+    # build_initial_tasks classifications take precedence (same values anyway,but kept explicit for auditability).
     merged_gap_type_map = {**full_gap_type_map, **gap_type_map}
 
     # 1.  RAW COUNTS FROM SOURCE-OF-TRUTH STRUCTURES
