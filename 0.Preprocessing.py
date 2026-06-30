@@ -16,10 +16,6 @@ rows from the DETECTION table where
     BACK_Z  = -1
 
 The original SQLite is NEVER modified.
-
-Designed for very large databases (5GB+).
-
-Author: Kaviya Gopalakrishnan
 =========================================================
 """
 
