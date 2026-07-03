@@ -1,4 +1,5 @@
 import os
+import cv2
 import sqlite3
 import pandas as pd
 from datetime import datetime
@@ -13,6 +14,83 @@ QC_MODE_BINARY_SEARCH = "BINARY_SEARCH"
 QC_MODE_LOGIC         = "LOGIC"
 # Backward-compat alias (old 3.lmt_qc_sampler.py outputs wrote "ASSUMED")
 QC_MODE_ASSUMED       = "ASSUMED"
+
+DB_FPS           = 30
+FRAME_CONVERSION = 2
+
+# Video helpers (backward-search; no first-video fallback)
+def get_start_frame(video_name):
+    try:
+        return int(video_name.split("t")[1].split(".")[0])
+    except Exception:
+        return None
+
+def get_video_frame_count(video_path):
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return 0
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    return total
+
+def build_video_map(video_paths):
+    video_map = []
+    for v in video_paths:
+        name  = os.path.basename(v)
+        start = get_start_frame(name)
+        if start is None:
+            continue
+        frames = get_video_frame_count(v)
+        end    = start + frames * FRAME_CONVERSION
+        video_map.append({"start": start, "end": end, "path": v})
+    video_map.sort(key=lambda x: x["start"])
+    return video_map
+
+def extract_frame_to_label(video_map, global_frame, label_widget, thumb_size=(420, 340)):
+    """
+    Extract a frame from video_map using backward search and display it in
+    a Tkinter Label widget.  Returns True on success, False on failure.
+    """
+    import tempfile, uuid
+    tmp_path = os.path.join(tempfile.gettempdir(),
+                            f"lmt_qc_{uuid.uuid4().hex}.png")
+    search_frame = global_frame
+    found = False
+    while search_frame >= 0:
+        for v in video_map:
+            if v["start"] <= search_frame < v["end"]:
+                local = int((search_frame - v["start"]) / FRAME_CONVERSION)
+                cap   = cv2.VideoCapture(v["path"])
+                if not cap.isOpened():
+                    cap.release()
+                    break
+                total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(local, total - 1)))
+                ret, frame = cap.read()
+                cap.release()
+                if ret:
+                    cv2.imwrite(tmp_path, frame)
+                    found = True
+                break
+        if found:
+            break
+        search_frame -= 1
+
+    if found and os.path.exists(tmp_path):
+        img   = Image.open(tmp_path)
+        img.thumbnail(thumb_size)
+        photo = ImageTk.PhotoImage(img)
+        label_widget.config(image=photo, text="")
+        label_widget.image = photo   # keep reference
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        return True
+
+    label_widget.config(image="", text="[Frame not available]", fg="#888888")
+    label_widget.image = None
+    return False
 
 
 # Sentinel values stored in MANUAL_QC column
@@ -32,6 +110,8 @@ QC_MODE_ASSUMED       = "ASSUMED"
 # Global state
 qc_db_path        = ""
 screenshot_folder = ""
+video_paths_list  = []   # LMT videos selected by user
+video_map         = []   # built from video_paths_list
 df                = None
 current_index     = 0
 active_qc_mode    = QC_MODE_ASSUMED   # resolved after load
@@ -154,15 +234,57 @@ def show_sample():
     screenshot_nm = row["screenshot"]
     image_path    = os.path.join(screenshot_folder, screenshot_nm)
 
-    if not os.path.exists(image_path):
-        messagebox.showerror("Missing Screenshot", image_path)
-        return
+    is_assumed_mode = active_qc_mode in (
+        QC_MODE_BINARY_SEARCH, QC_MODE_LOGIC, QC_MODE_ASSUMED)
 
-    img   = Image.open(image_path)
-    img.thumbnail((900, 700))
-    photo = ImageTk.PhotoImage(img)
-    image_label.config(image=photo)
-    image_label.image = photo
+    if is_assumed_mode:
+        # Three-panel display: left boundary | QC frame | right boundary
+        gap_start = row.get("GAP_START_FRAME")
+        gap_end   = row.get("GAP_END_FRAME")
+        has_boundaries = (
+            video_map and
+            pd.notna(gap_start) and pd.notna(gap_end)
+        )
+
+        if has_boundaries:
+            panels_frame.pack(side=LEFT, padx=10)
+            single_frame.pack_forget()
+            extract_frame_to_label(video_map, int(gap_start), img_left,
+                                   thumb_size=(300, 260))
+            lbl_left_title.config(text=f"Before gap  (frame {int(gap_start)})")
+
+            extract_frame_to_label(video_map, int(row["frame_global"]), img_center,
+                                   thumb_size=(300, 260))
+            lbl_center_title.config(text=f"QC frame  (frame {int(row['frame_global'])})")
+
+            extract_frame_to_label(video_map, int(gap_end), img_right,
+                                   thumb_size=(300, 260))
+            lbl_right_title.config(text=f"After gap  (frame {int(gap_end)})")
+        else:
+            # No video map or no boundary info — fall back to single panel
+            panels_frame.pack_forget()
+            single_frame.pack(side=LEFT, padx=20)
+            if os.path.exists(image_path):
+                img   = Image.open(image_path)
+                img.thumbnail((900, 700))
+                photo = ImageTk.PhotoImage(img)
+                image_label.config(image=photo)
+                image_label.image = photo
+            else:
+                messagebox.showerror("Missing Screenshot", image_path)
+                return
+    else:
+        # DETECTED mode: single panel as before
+        panels_frame.pack_forget()
+        single_frame.pack(side=LEFT, padx=20)
+        if not os.path.exists(image_path):
+            messagebox.showerror("Missing Screenshot", image_path)
+            return
+        img   = Image.open(image_path)
+        img.thumbnail((900, 700))
+        photo = ImageTk.PhotoImage(img)
+        image_label.config(image=photo)
+        image_label.image = photo
 
     sample_text.config(text=f"Sample {current_index + 1} / {len(df)}")
     video_text.config(text=f"Video: {row['video']}")
@@ -181,7 +303,7 @@ def show_sample():
         else:
             gap_text.config(text="Gap: N/A")
     else:
-        gap_text.config(text="")   # not applicable for detected rows
+        gap_text.config(text="")
 
     in_nest_val = int(row["IN_NEST"])
     if in_nest_val == 1:
@@ -212,7 +334,9 @@ def set_manual_qc(value):
     global current_index
     df.at[current_index, "MANUAL_QC"] = value
     save_database()
-    show_sample()
+    # Auto-advance: pressing A or D immediately moves to the next sample.
+    # next_sample() handles both advancement and end-of-session finalisation.
+    next_sample()
 
 def previous_sample():
     global current_index
@@ -322,18 +446,31 @@ def select_database():
     qc_db_path = filedialog.askopenfilename(filetypes=[("SQLite Database", "*.sqlite")])
     db_label.config(text=qc_db_path)
 
+def select_videos():
+    global video_paths_list
+    video_paths_list = list(filedialog.askopenfilenames(
+        filetypes=[("MP4 Video", "*.mp4")]))
+    vid_label.config(text=f"{len(video_paths_list)} video(s) selected"
+                     if video_paths_list else "No videos selected")
+
 def select_folder():
     global screenshot_folder
     screenshot_folder = filedialog.askdirectory()
     folder_label.config(text=screenshot_folder)
 
 def start_qc():
-    global df, current_index
+    global df, current_index, video_map
 
     if not qc_db_path:
         messagebox.showerror("Error", "Please select QC SQLite database"); return
     if not screenshot_folder:
         messagebox.showerror("Error", "Please select screenshot folder");   return
+
+    # Build video map if videos were provided (optional; enables three-panel display)
+    if video_paths_list:
+        video_map = build_video_map(video_paths_list)
+    else:
+        video_map = []
 
     loaded_df, excluded, qc_mode = load_database()
 
@@ -382,7 +519,7 @@ def bind_keys(root):
 # GUI layout
 root = Tk()
 root.title("LMT QC Validator")
-root.geometry("1400x950")
+root.geometry("1600x950")
 
 bind_keys(root)
 
@@ -390,30 +527,62 @@ bind_keys(root)
 top_frame = Frame(root)
 top_frame.pack(pady=10)
 
-Button(top_frame, text="Select lmt_qc_sampler_<qc_mode>_<timestamp>.sqlite", command=select_database).grid(row=0, column=0, padx=10)
+Button(top_frame, text="Select lmt_qc_sampler_<qc_mode>_<timestamp>.sqlite",
+       command=select_database).grid(row=0, column=0, padx=10)
 db_label = Label(top_frame, text="No database selected", wraplength=500)
 db_label.grid(row=0, column=1)
 
-Button(top_frame, text="Select Screenshot Folder", command=select_folder).grid(row=1, column=0, padx=10)
-folder_label = Label(top_frame, text="No folder selected", wraplength=500)
-folder_label.grid(row=1, column=1)
+Button(top_frame, text="Select LMT Videos  (for 3-panel view)",
+       command=select_videos).grid(row=1, column=0, padx=10)
+vid_label = Label(top_frame, text="No videos selected  (optional — enables boundary panels)",
+                  wraplength=500)
+vid_label.grid(row=1, column=1)
 
-Button(top_frame, text="START QC", command=start_qc, bg="green", fg="white", width=20).grid(row=2, column=0, columnspan=2, pady=10)
+Button(top_frame, text="Select Screenshot Folder",
+       command=select_folder).grid(row=2, column=0, padx=10)
+folder_label = Label(top_frame, text="No folder selected", wraplength=500)
+folder_label.grid(row=2, column=1)
+
+Button(top_frame, text="START QC", command=start_qc,
+       bg="green", fg="white", width=20).grid(row=3, column=0, columnspan=2, pady=10)
 
 # Main area
 main_frame = Frame(root)
 main_frame.pack(fill=BOTH, expand=True)
 
-left_frame = Frame(main_frame)
-left_frame.pack(side=LEFT, padx=20)
+# ── Three-panel image area (used for ASSUMED modes when videos are loaded) ───
+panels_frame = Frame(main_frame, bg="#111")
+# (packed/unpacked dynamically in show_sample)
 
-image_label = Label(left_frame)
+lbl_left_title  = Label(panels_frame, text="Before gap",  font=("Arial", 8, "bold"),
+                         fg="#aaa", bg="#111")
+lbl_left_title.grid(row=0, column=0, padx=4)
+img_left        = Label(panels_frame, bg="#111")
+img_left.grid(row=1, column=0, padx=4, pady=2)
+
+lbl_center_title = Label(panels_frame, text="QC frame",   font=("Arial", 8, "bold"),
+                          fg="#55ff55", bg="#0d2a0d")
+lbl_center_title.grid(row=0, column=1, padx=4)
+img_center      = Label(panels_frame, bg="#0d2a0d", bd=2, relief=GROOVE)
+img_center.grid(row=1, column=1, padx=4, pady=2)
+
+lbl_right_title = Label(panels_frame, text="After gap",   font=("Arial", 8, "bold"),
+                         fg="#aaa", bg="#111")
+lbl_right_title.grid(row=0, column=2, padx=4)
+img_right       = Label(panels_frame, bg="#111")
+img_right.grid(row=1, column=2, padx=4, pady=2)
+
+# ── Single-panel image area (used for DETECTED mode or when no videos loaded) ─
+single_frame = Frame(main_frame)
+# (packed/unpacked dynamically in show_sample)
+
+image_label = Label(single_frame)
 image_label.pack()
 
 right_frame = Frame(main_frame)
 right_frame.pack(side=RIGHT, padx=40, anchor=N)
 
-# QC mode banner (shown at top of right panel once loaded)
+# QC mode banner
 mode_banner = Label(right_frame, text="", font=("Arial", 10, "bold"))
 mode_banner.pack(pady=(4, 0))
 
@@ -439,15 +608,25 @@ manual_text     = Label(right_frame, text="Manual QC",       font=("Arial", 12, 
 manual_text.pack(pady=10)
 
 # Action buttons
-Button(right_frame, text="IN NEST  (A)", bg="green", fg="white", width=22, height=2, command=lambda: set_manual_qc(1)).pack(pady=5)
+Button(right_frame, text="IN NEST  (A)", bg="green", fg="white", width=22, height=2,
+       command=lambda: set_manual_qc(1)).pack(pady=5)
 
-Button(right_frame, text="OUT OF NEST  (D)", bg="red", fg="white", width=22, height=2, command=lambda: set_manual_qc(0)).pack(pady=5)
+Button(right_frame, text="OUT OF NEST  (D)", bg="red", fg="white", width=22, height=2,
+       command=lambda: set_manual_qc(0)).pack(pady=5)
 
 Label(right_frame, text="", font=("Arial", 6)).pack()
 
-Button(right_frame, text="\u25c4  PREVIOUS  (\u2190)", width=22, command=previous_sample).pack(pady=5)
-Button(right_frame, text="NEXT  (\u2192)  \u25ba", width=22, command=next_sample).pack(pady=5)
+Button(right_frame, text="\u25c4  PREVIOUS  (\u2190)", width=22,
+       command=previous_sample).pack(pady=5)
+Button(right_frame, text="NEXT  (\u2192)  \u25ba", width=22,
+       command=next_sample).pack(pady=5)
 
-Label(right_frame, text="\nKeyboard shortcuts:\nA = IN NEST\nD = OUT OF NEST\n\u2190 = Previous\n\u2192 = Next", font=("Arial", 10), fg="gray", justify=CENTER).pack(pady=15)
+Label(right_frame,
+      text=("\nKeyboard shortcuts:\n"
+            "A = IN NEST  (auto-advances)\n"
+            "D = OUT OF NEST  (auto-advances)\n"
+            "\u2190 = Previous\n"
+            "\u2192 = Next (without labelling)"),
+      font=("Arial", 10), fg="gray", justify=CENTER).pack(pady=15)
 
 root.mainloop()
