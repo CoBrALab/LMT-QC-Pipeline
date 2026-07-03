@@ -69,29 +69,27 @@ def build_video_map(video_paths):
     return video_map
 
 def extract_frame_to_path(video_map, global_frame, out_path):
-    matched_video = None
-    matched_start = None
-    for v in video_map:
-        if v["start"] <= global_frame < v["end"]:
-            matched_video = v["path"]
-            matched_start = v["start"]
-            break
-    if matched_video is None and video_map:
-        matched_video = video_map[0]["path"]
-        matched_start = video_map[0]["start"]
-    if matched_video is None:
-        return False
-    local_frame = int((global_frame - matched_start) / FRAME_CONVERSION)
-    cap = cv2.VideoCapture(matched_video)
-    if not cap.isOpened():
-        return False
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(local_frame, total - 1)))
-    ret, frame = cap.read()
-    cap.release()
-    if ret:
-        cv2.imwrite(out_path, frame)
-        return True
+    # Search for the requested frame. If no video covers it, walk backward
+    # one frame at a time until we find a frame that exists in the video map.
+    # Never fall back to the first video arbitrarily.
+    search_frame = global_frame
+    while search_frame >= 0:
+        for v in video_map:
+            if v["start"] <= search_frame < v["end"]:
+                local_frame = int((search_frame - v["start"]) / FRAME_CONVERSION)
+                cap = cv2.VideoCapture(v["path"])
+                if not cap.isOpened():
+                    cap.release()
+                    break
+                total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(local_frame, total - 1)))
+                ret, frame = cap.read()
+                cap.release()
+                if ret:
+                    cv2.imwrite(out_path, frame)
+                    return True
+                break  # video matched but read failed; try previous frame
+        search_frame -= 1
     return False
 
 # Gap boundary classification
