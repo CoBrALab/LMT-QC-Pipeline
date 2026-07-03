@@ -44,29 +44,27 @@ def build_video_map(video_paths):
     return video_map
 
 def extract_frame(video_map, global_frame, out_path):
-    matched_video = None
-    matched_start = None
-    for v in video_map:
-        if v["start"] <= global_frame < v["end"]:
-            matched_video = v["path"]
-            matched_start = v["start"]
-            break
-    if matched_video is None and video_map:
-        matched_video = video_map[0]["path"]
-        matched_start = video_map[0]["start"]
-    if matched_video is None:
-        return None
-    local_frame = int((global_frame - matched_start) / FRAME_CONVERSION)
-    cap = cv2.VideoCapture(matched_video)
-    if not cap.isOpened():
-        return None
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(local_frame, total - 1)))
-    ret, frame = cap.read()
-    cap.release()
-    if ret:
-        cv2.imwrite(out_path, frame)
-        return local_frame
+    # Search for the requested frame. If no video covers it, walk backward
+    # one frame at a time until we find a frame that exists in the video map.
+    # Never fall back to the first video arbitrarily.
+    search_frame = global_frame
+    while search_frame >= 0:
+        for v in video_map:
+            if v["start"] <= search_frame < v["end"]:
+                local_frame = int((search_frame - v["start"]) / FRAME_CONVERSION)
+                cap = cv2.VideoCapture(v["path"])
+                if not cap.isOpened():
+                    cap.release()
+                    break
+                total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(local_frame, total - 1)))
+                ret, frame = cap.read()
+                cap.release()
+                if ret:
+                    cv2.imwrite(out_path, frame)
+                    return local_frame
+                break  # video matched but read failed; try previous frame
+        search_frame -= 1
     return None
 
 # Pool filtering
@@ -164,14 +162,19 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
 
     for _, row in df_sample.iterrows():
         global_frame = int(row["FRAMENUMBER"])
-        video_name   = ""
 
-        for v in video_map:
-            if v["start"] <= global_frame < v["end"]:
-                video_name = os.path.basename(v["path"])
-                break
-        if not video_name and video_map:
-            video_name = os.path.basename(video_map[0]["path"])
+        # Determine which video the QC frame nominally belongs to.
+        # Use the same backward-search logic: find the video whose range
+        # covers global_frame, or walk back until one does.
+        video_name = ""
+        search_f = global_frame
+        while search_f >= 0 and not video_name:
+            for v in video_map:
+                if v["start"] <= search_f < v["end"]:
+                    video_name = os.path.basename(v["path"])
+                    break
+            if not video_name:
+                search_f -= 1
 
         screenshot_name = (
             f"S{counter:04d}_A{animal_id}_G{global_frame}_{video_name}.png")
@@ -181,19 +184,24 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
         if local_frame is None:
             continue
 
+        # Gap boundary frames for three-panel display in 4.lmt_qc_validator.py.
+        # Only present for ASSUMED rows; None for DETECTED.
+        gap_start = row.get("GAP_START_FRAME")
+        gap_end   = row.get("GAP_END_FRAME")
+
         results.append({
-            "sample_id":       counter,
-            "animal_id":       animal_id,
-            "video":           video_name,
-            "frame_global":    global_frame,
-            "IN_NEST":         row["IN_NEST"],
-            "ASSUMPTION_TYPE": row.get("ASSUMPTION_TYPE", "ASSUMED"),
-            "FILL_SOURCE":     row.get("FILL_SOURCE", qc_mode),
-            "GAP_START_FRAME": row.get("GAP_START_FRAME"),
-            "GAP_END_FRAME":   row.get("GAP_END_FRAME"),
-            "screenshot":      screenshot_name,
+            "sample_id":              counter,
+            "animal_id":              animal_id,
+            "video":                  video_name,
+            "frame_global":           global_frame,
+            "IN_NEST":                row["IN_NEST"],
+            "ASSUMPTION_TYPE":        row.get("ASSUMPTION_TYPE", "ASSUMED"),
+            "FILL_SOURCE":            row.get("FILL_SOURCE", qc_mode),
+            "GAP_START_FRAME":        gap_start,
+            "GAP_END_FRAME":          gap_end,
+            "screenshot":             screenshot_name,
             # QC_MODE is read by 4.lmt_qc_validator.py to determine display/metrics context
-            "QC_MODE":         qc_mode,
+            "QC_MODE":                qc_mode,
         })
         counter += 1
 
