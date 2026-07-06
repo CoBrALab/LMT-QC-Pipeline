@@ -207,85 +207,259 @@ Both the input database and output directory are selected interactively using fi
 For very large databases, the application window may appear temporarily unresponsive during this operation. This behavior is intentional and has not been changed, as making the process asynchronous would require introducing threading and significantly altering the execution model.
 ---
 
-### Script: `1.lmt_gap_fill.py`
+# Script: `1.lmt_gap_fill.py`
 
-**Core Logic**
-For a single animal (`ANIMALID`), reads all `DETECTION` rows ordered by frame
-number, and for every pair of *consecutive* detected frames, determines whether
-a gap (missing detections) exists between them. Detected frames are recorded
-as `ASSUMPTION_TYPE = DETECTED` with their actual in-nest status (based on a
-user-defined nest ROI). Missing frames within a gap are recorded as
-`ASSUMPTION_TYPE = ASSUMED`, with `IN_NEST = 1` ("logic-filled") only if the
-animal is in the nest at the gap's start **and** still within a looser nest
-buffer ROI at the gap's end; otherwise `IN_NEST = -1` (uncertain, deferred to
-binary search in script 2). Results are written to a new, timestamped SQLite
-file.
+## Overview
 
-**Inputs**
+This script processes detection data for a **single animal (`ANIMALID`)** and fills gaps between consecutive detections using rule-based logic.
 
-| File | Type | Purpose |
-|---|---|---|
-| LMT SQLite database (user-selected, typically the script 0 output) | SQLite database | Source of detection positions for the target animal. |
+For every pair of consecutive detected frames:
 
-SQLite input details:
-- **Filename**: user-selected, arbitrary.
-- **Table used**: `DETECTION`
-- **Columns used**: `FRAMENUMBER` (frame index), `MASS_X`, `MASS_Y` (animal
-  centroid position), `ANIMALID` (filter criterion, supplied via GUI).
-- Other columns: **Not determinable from code** (only these four are
-  referenced/selected).
+- Determines whether missing frames (a gap) exist.
+- Records detected frames as `ASSUMPTION_TYPE = "DETECTED"` using their actual in-nest status based on the user-defined nest ROI.
+- Records missing frames as `ASSUMPTION_TYPE = "ASSUMED"`.
 
-Additional (non-file) inputs via GUI: `Animal ID`, nest ROI
-(`nest_xmin/xmax/ymin/ymax`), and nest buffer ROI
-(`buffer_xmin/xmax/ymin/ymax`) — all user-entered numeric bounding boxes in the
-same coordinate space as `MASS_X`/`MASS_Y`.
+For assumed frames:
 
-**Outputs**
+- `IN_NEST = 1` (logic-filled) **only if**
+  - the animal is inside the nest ROI at the start of the gap **and**
+  - remains inside the larger nest buffer ROI at the end of the gap.
+- Otherwise:
+  - `IN_NEST = -1` (uncertain), allowing **Script 2 (`2.lmt_binary_search.py`)** to resolve the gap using binary search.
 
-| File | Type | Purpose |
-|---|---|---|
-| `lmt_gap_fill_<YYYY-MM-DD_HH-MM-SS>.sqlite` | SQLite database | Per-frame in-nest classification (detected + gap-filled/assumed) for the selected animal, feeding into script 2. |
+Results are written to a new timestamped SQLite database.
 
-SQLite output details:
-- **Filename**: `lmt_gap_fill_<timestamp>.sqlite`
-- **Table**: `GAP_FILL_ANALYSIS`
-- **Columns**:
-  - `FRAMENUMBER` (int) — frame index.
-  - `IN_NEST` (int: `1`, `0`, or `-1`) — `1` = in nest, `0`/`-1` never assigned
-    directly by this script for `DETECTED` rows other than the actual
-    `in_roi()` result (`0` or `1`); for `ASSUMED` rows, `1` = logic-filled
-    in-nest, `-1` = uncertain (needs binary search). Note: this script never
-    writes a plain `0` for `ASSUMED` rows — only `1` or `-1`.
-  - `ASSUMPTION_TYPE` (str: `"DETECTED"` or `"ASSUMED"`) — whether the frame
-    was actually observed by LMT or filled in for a gap.
-  - `GAP_START_FRAME` (int or `None`) — for `ASSUMED` rows, the last detected
-    frame *before* the gap; `None` for `DETECTED` rows.
-  - `GAP_END_FRAME` (int or `None`) — for `ASSUMED` rows, the first detected
-    frame *after* the gap; `None` for `DETECTED` rows.
+---
 
-**Do NOT Modify**
-- Downstream scripts (2, 3, 4) all assume the table name `GAP_FILL_ANALYSIS`
-  and rely on the exact column names above (`FRAMENUMBER`, `IN_NEST`,
-  `ASSUMPTION_TYPE`, `GAP_START_FRAME`, `GAP_END_FRAME`).
-- The convention that `ASSUMED` rows only ever carry `IN_NEST` values of `1`
-  or `-1` (never `0`) is depended upon by `2.lmt_binary_search.py`'s
-  `df_neg = df[df["IN_NEST"] == -1]` selection and its downstream
-  "logic_filled" vs. "binary-search input" accounting.
-- The meaning of `GAP_START_FRAME`/`GAP_END_FRAME` (last detected frame
-  before / first detected frame after the gap, **not** the first/last missing
-  frame) is relied upon by script 2's gap grouping (`groupby(["GAP_START_FRAME","GAP_END_FRAME"])`) and its gap-type classification.
-- Execution order: this script must run **after** row-invalidation
-  preprocessing (script 0, or equivalent) and **before** `2.lmt_binary_search.py`.
+## Recent Updates
 
-**Open Source Notes**
-- **External dependencies**: `pandas`, `tkinter`. Standard library: `os`,
-  `sqlite3`, `datetime`.
-- **Configuration files / environment variables**: none; all parameters
-  (animal ID, ROI bounds) are entered via the GUI at runtime (with hardcoded
-  defaults shown in the form).
-- **Expected directory structure**: none required beyond an existing, writable
-  output folder chosen via dialog.
-- **Platform assumptions**: requires Tkinter GUI support (not headless-safe).
+- Gap-fill computation is now **vectorized using NumPy**, replacing the previous per-frame Python loop.
+  - Output rows, values, and ordering are **unchanged**.
+- `ANIMALID` is now supplied as a **bound SQL parameter** instead of string interpolation.
+- Validation now ensures:
+  - `ANIMALID` is an integer.
+  - Detected frames are strictly increasing.
+  - Duplicate or out-of-order frame numbers raise a clear error before processing.
+
+---
+
+# Inputs
+
+## SQLite Database
+
+User-selected database (typically the output from **Script 0**).
+
+### Source Table
+
+| Table | Purpose |
+|--------|---------|
+| `DETECTION` | Detection positions for the selected animal |
+
+### Columns Used
+
+| Column | Purpose |
+|---------|---------|
+| `FRAMENUMBER` | Frame index |
+| `MASS_X` | X coordinate of animal centroid |
+| `MASS_Y` | Y coordinate of animal centroid |
+| `ANIMALID` | Animal filter |
+
+No other columns are referenced.
+
+---
+
+## Input Validation
+
+The script validates that:
+
+- `ANIMALID` is an integer.
+- After sorting by `FRAMENUMBER`, frame numbers are **strictly increasing**.
+- Duplicate or out-of-order detected frames cause the script to terminate with an informative error identifying the offending frame pairs.
+
+---
+
+# Outputs
+
+## SQLite Database
+
+**Filename**
+
+```text
+lmt_gap_fill_<YYYY-MM-DD_HH-MM-SS>.sqlite
+```
+
+### Output Table
+
+```text
+GAP_FILL_ANALYSIS
+```
+
+### Output Columns
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `FRAMENUMBER` | Integer | Frame index |
+| `IN_NEST` | Integer | `1` = in nest, `0` = out of nest (detected rows), `-1` = uncertain |
+| `ASSUMPTION_TYPE` | Text | `"DETECTED"` or `"ASSUMED"` |
+| `GAP_START_FRAME` | Integer / NULL | Last detected frame before a gap (`NULL` for detected rows) |
+| `GAP_END_FRAME` | Integer / NULL | First detected frame after a gap (`NULL` for detected rows) |
+
+### `IN_NEST` Values
+
+#### DETECTED rows
+
+| Value | Meaning |
+|-------|---------|
+| `1` | In nest |
+| `0` | Out of nest |
+
+#### ASSUMED rows
+
+| Value | Meaning |
+|-------|---------|
+| `1` | Logic-filled as in nest |
+| `-1` | Uncertain; to be resolved by Script 2 |
+
+> **Note:** Assumed rows never receive `IN_NEST = 0`.
+
+---
+
+# Do Not Modify
+
+The following behavior is relied upon by downstream scripts.
+
+## Required Table
+
+```text
+GAP_FILL_ANALYSIS
+```
+
+## Required Columns
+
+- `FRAMENUMBER`
+- `IN_NEST`
+- `ASSUMPTION_TYPE`
+- `GAP_START_FRAME`
+- `GAP_END_FRAME`
+
+Scripts **2**, **3**, and **4** assume these names remain unchanged.
+
+---
+
+## Assumed Frame Convention
+
+`ASSUMED` rows must only contain:
+
+- `IN_NEST = 1`
+- `IN_NEST = -1`
+
+They must **never** contain `0`.
+
+Script 2 relies on this convention when selecting:
+
+```python
+df_neg = df[df["IN_NEST"] == -1]
+```
+
+---
+
+## Gap Boundary Meaning
+
+The following definitions must remain unchanged:
+
+- `GAP_START_FRAME` = last detected frame before the gap
+- `GAP_END_FRAME` = first detected frame after the gap
+
+Script 2 depends on these definitions for gap grouping and classification.
+
+---
+
+## Known Cross-Script Behavior
+
+There is one intentional discrepancy between Scripts 1 and 2.
+
+### Script 1 logic-fill rule
+
+Uses:
+
+- strict nest ROI at the gap start
+- larger nest buffer ROI at the gap end
+
+### Script 2 gap classification
+
+Uses:
+
+- strict nest ROI at **both** boundary frames
+
+As a result, Script 2 may occasionally encounter an `IN_NEST = -1` frame within what it classifies as a "type 11" gap.
+
+Script 2 already contains explicit handling for this edge case.
+
+Changing this behavior would alter which frames are:
+
+- logic-filled
+- sent to binary search
+
+and therefore must be coordinated across both scripts rather than modified here.
+
+---
+
+# Execution Order
+
+Run scripts in the following order:
+
+```text
+Script 0
+    ↓
+1.lmt_gap_fill.py
+    ↓
+2.lmt_binary_search.py
+```
+
+---
+
+# Open Source Notes
+
+## External Dependencies
+
+- pandas
+- numpy *(required for vectorized gap filling)*
+- tkinter
+
+### Standard Library
+
+- os
+- sqlite3
+- datetime
+
+---
+
+## Configuration
+
+No configuration files or environment variables are required.
+
+All runtime parameters are entered through the GUI, including:
+
+- Animal ID
+- Nest ROI
+- Nest buffer ROI
+
+The GUI provides default values.
+
+---
+
+## Directory Requirements
+
+None.
+
+The user simply selects an existing writable output directory.
+
+---
+
+## Platform Requirements
+
+- Requires **Tkinter GUI** support.
+- Not designed for headless execution.
 
 ---
 
