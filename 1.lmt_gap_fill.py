@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import numpy as np
 import pandas as pd
 from datetime import datetime
 from tkinter import *
@@ -7,88 +8,138 @@ from tkinter import filedialog, messagebox
 
 # Main analysis
 def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_ymin, nest_ymax, buffer_xmin, buffer_xmax, buffer_ymin, buffer_ymax):
+
+    # Validate animal_id and use a parameterized query (was an f-string SQL injection risk).
+    try:
+        animal_id = int(animal_id)
+    except (TypeError, ValueError):
+        raise Exception(f"Invalid Animal ID: {animal_id!r}. Animal ID must be an integer.")
+
     conn = sqlite3.connect(input_db)
     df = pd.read_sql_query(
-        f"""
+        """
         SELECT
             FRAMENUMBER,
             MASS_X,
             MASS_Y
         FROM DETECTION
-        WHERE ANIMALID = {animal_id}
+        WHERE ANIMALID = ?
         ORDER BY FRAMENUMBER
         """,
-        conn
+        conn,
+        params=(animal_id,)
     )
     conn.close()
 
     if len(df) == 0:
         raise Exception(f"No DETECTION rows found for Animal ID {animal_id}")
 
-    def in_roi(x, y, roi):
-        return (roi["xmin"] < x < roi["xmax"] and roi["ymin"] < y < roi["ymax"])
-
     NEST        = {"xmin": nest_xmin,   "xmax": nest_xmax,   "ymin": nest_ymin,   "ymax": nest_ymax}
     NEST_BUFFER = {"xmin": buffer_xmin, "xmax": buffer_xmax, "ymin": buffer_ymin, "ymax": buffer_ymax}
 
-    rows = []
-    assumed_rows  = 0
-    detected_rows = 0
-    detected_in_nest_frames = 0
+    def in_roi_vec(x, y, roi):
+        # Vectorized equivalent of the original scalar in_roi() helper.
+        # Boundary semantics (strict <) are unchanged from the original.
+        return (roi["xmin"] < x) & (x < roi["xmax"]) & (roi["ymin"] < y) & (y < roi["ymax"])
 
-    for i in range(len(df) - 1):
-        current  = df.iloc[i]
-        next_row = df.iloc[i + 1]
+    frames_arr = df["FRAMENUMBER"].to_numpy(dtype=np.int64)
+    x_arr      = df["MASS_X"].to_numpy(dtype=np.float64)
+    y_arr      = df["MASS_Y"].to_numpy(dtype=np.float64)
 
-        f1 = int(current["FRAMENUMBER"])
-        f2 = int(next_row["FRAMENUMBER"])
+    n = len(frames_arr)
 
-        x1, y1 = current["MASS_X"],  current["MASS_Y"]
-        x2, y2 = next_row["MASS_X"], next_row["MASS_Y"]
+    # DETECTED rows: every detected frame gets exactly one row, identical to
+    # the original code's behavior (each frame is visited as "current" once,
+    # plus the final frame handled separately in the original — mathematically
+    # equivalent to applying in_roi() to every detected frame here).
+    detected_in_nest = in_roi_vec(x_arr, y_arr, NEST).astype(int)
 
-        in_nest_start = in_roi(x1, y1, NEST)
-        in_buffer_end = in_roi(x2, y2, NEST_BUFFER)
+    detected_rows = n
+    detected_in_nest_frames = int(detected_in_nest.sum())
+    detected_not_in_nest_frames = detected_rows - detected_in_nest_frames
 
-        rows.append({
-            "FRAMENUMBER":     f1,
-            "IN_NEST":         int(in_nest_start),
-            "ASSUMPTION_TYPE": "DETECTED",
-            "GAP_START_FRAME": None,
-            "GAP_END_FRAME":   None,
-        })
-
-        detected_rows += 1
-        if in_nest_start:
-            detected_in_nest_frames += 1
+    # ASSUMED rows: derived from every consecutive pair of detected frames.
+    if n > 1:
+        f1 = frames_arr[:-1]
+        f2 = frames_arr[1:]
+        x1, y1 = x_arr[:-1], y_arr[:-1]
+        x2, y2 = x_arr[1:],  y_arr[1:]
 
         gap = f2 - f1
-        if gap > 1:
-            in_nest_value  = 1 if (in_nest_start and in_buffer_end) else -1
 
-            for frame in range(f1 + 1, f2):
-                rows.append({
-                    "FRAMENUMBER":     frame,
-                    "IN_NEST":         in_nest_value,
-                    "ASSUMPTION_TYPE": "ASSUMED",
-                    "GAP_START_FRAME": f1, # the value that we mention for GAP_START_FRAME is the last detected frame BEFORE gap begins
-                    "GAP_END_FRAME":   f2, # the value that we mention for GAP_END_FRAME is the first detected frame AFTER gap ends
-                })
-                assumed_rows += 1
+        # Missing validation: consecutive detected frames for this animal must
+        # strictly increase. A duplicate or out-of-order FRAMENUMBER would
+        # previously be silently treated as "no gap" (gap > 1 is False) with
+        # no indication of a data-quality problem.
+        if np.any(gap <= 0):
+            bad_idx = np.nonzero(gap <= 0)[0]
+            examples = [(int(f1[i]), int(f2[i])) for i in bad_idx[:10]]
+            raise Exception(
+                f"Found {len(bad_idx):,} duplicate or non-increasing FRAMENUMBER "
+                f"pair(s) for Animal ID {animal_id} after ordering by FRAMENUMBER. "
+                f"This indicates duplicate or out-of-order detection rows.\n"
+                f"Example (FRAMENUMBER, next FRAMENUMBER) pairs: {examples}"
+            )
 
-    last = df.iloc[-1]
-    last_in_nest = in_roi(last["MASS_X"], last["MASS_Y"], NEST)
-    rows.append({
-        "FRAMENUMBER":     int(last["FRAMENUMBER"]),
-        "IN_NEST":         int(last_in_nest),
+        in_nest_start = in_roi_vec(x1, y1, NEST)
+        in_buffer_end = in_roi_vec(x2, y2, NEST_BUFFER)
+
+        gap_mask  = gap > 1
+        gap_sizes = np.where(gap_mask, gap - 1, 0)
+
+        gap_idx = np.nonzero(gap_mask)[0]
+
+        if gap_idx.size > 0:
+            sizes  = gap_sizes[gap_idx]
+            starts = f1[gap_idx] + 1
+
+            # Build the missing FRAMENUMBER for every gap frame via a small
+            # per-gap loop (bounded by number of gaps, not number of missing
+            # frames) plus vectorized repeat/offset — avoids the original
+            # per-missing-frame Python dict-append loop.
+            offsets = np.concatenate([np.arange(s) for s in sizes])
+            frame_numbers_assumed = np.repeat(starts, sizes) + offsets
+            gap_start_assumed     = np.repeat(f1[gap_idx], sizes)
+            gap_end_assumed       = np.repeat(f2[gap_idx], sizes)
+
+            in_nest_value_per_gap = np.where(
+                in_nest_start[gap_idx] & in_buffer_end[gap_idx], 1, -1
+            )
+            in_nest_assumed = np.repeat(in_nest_value_per_gap, sizes)
+        else:
+            frame_numbers_assumed = np.array([], dtype=np.int64)
+            gap_start_assumed     = np.array([], dtype=np.int64)
+            gap_end_assumed       = np.array([], dtype=np.int64)
+            in_nest_assumed       = np.array([], dtype=np.int64)
+    else:
+        frame_numbers_assumed = np.array([], dtype=np.int64)
+        gap_start_assumed     = np.array([], dtype=np.int64)
+        gap_end_assumed       = np.array([], dtype=np.int64)
+        in_nest_assumed       = np.array([], dtype=np.int64)
+
+    assumed_rows = int(frame_numbers_assumed.size)
+
+    detected_df = pd.DataFrame({
+        "FRAMENUMBER":     frames_arr,
+        "IN_NEST":         detected_in_nest,
         "ASSUMPTION_TYPE": "DETECTED",
         "GAP_START_FRAME": None,
         "GAP_END_FRAME":   None,
     })
-    detected_rows += 1
-    if last_in_nest:
-        detected_in_nest_frames += 1
 
-    output_df = pd.DataFrame(rows)
+    assumed_df = pd.DataFrame({
+        "FRAMENUMBER":     frame_numbers_assumed,
+        "IN_NEST":         in_nest_assumed,
+        "ASSUMPTION_TYPE": "ASSUMED",
+        "GAP_START_FRAME": gap_start_assumed,
+        "GAP_END_FRAME":   gap_end_assumed,
+    })
+
+    # Concatenating and sorting by FRAMENUMBER reproduces the original row
+    # order exactly, since ASSUMED frames only ever fall strictly between two
+    # DETECTED frames (no overlaps, given the duplicate/order check above).
+    output_df = pd.concat([detected_df, assumed_df], ignore_index=True)
+    output_df = output_df.sort_values("FRAMENUMBER").reset_index(drop=True)
 
     current_date_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     sqlite_name = f"lmt_gap_fill_{current_date_time}.sqlite"
@@ -98,8 +149,6 @@ def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_
     conn = sqlite3.connect(output_sqlite)
     output_df.to_sql("GAP_FILL_ANALYSIS", conn, if_exists="replace", index=False)
     conn.close()
-
-    detected_not_in_nest_frames = detected_rows - detected_in_nest_frames
 
     messagebox.showinfo(
         "Analysis Complete",
