@@ -68,29 +68,72 @@ def build_video_map(video_paths):
     video_map.sort(key=lambda x: x["start"])
     return video_map
 
-def extract_frame_to_path(video_map, global_frame, out_path):
-    # Search for the requested frame. If no video covers it, walk backward
-    # one frame at a time until we find a frame that exists in the video map.
-    # Never fall back to the first video arbitrarily.
-    search_frame = global_frame
-    while search_frame >= 0:
-        for v in video_map:
-            if v["start"] <= search_frame < v["end"]:
-                local_frame = int((search_frame - v["start"]) / FRAME_CONVERSION)
-                cap = cv2.VideoCapture(v["path"])
-                if not cap.isOpened():
-                    cap.release()
-                    break
-                total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(local_frame, total - 1)))
-                ret, frame = cap.read()
-                cap.release()
-                if ret:
-                    cv2.imwrite(out_path, frame)
-                    return True
-                break  # video matched but read failed; try previous frame
-        search_frame -= 1
+def find_nearest_frame_candidates(video_map, global_frame):
+    """
+    Resolve a requested global frame to the video(s) that can actually supply it.
+
+    - If a video directly covers global_frame, that is the only candidate.
+    - Otherwise, find the nearest preceding available frame (the last frame of
+      the video ending closest to, but before, global_frame) and the nearest
+      succeeding available frame (the first frame of the video starting
+      closest to, but after, global_frame). Whichever is closer to
+      global_frame is preferred; on a tie, the preceding frame is preferred.
+      The runner-up is kept as a fallback candidate in case the preferred
+      video can't be opened/read.
+
+    Returns a list of (resolved_global_frame, video_entry) tuples, ordered by
+    preference. Empty list if video_map is empty.
+    """
+    if not video_map:
+        return []
+
+    for v in video_map:
+        if v["start"] <= global_frame < v["end"]:
+            return [(global_frame, v)]
+
+    preceding  = None  # (resolved_frame, video_entry)
+    succeeding = None
+    for v in video_map:
+        if v["end"] <= global_frame and (preceding is None or v["end"] > preceding[1]["end"]):
+            preceding = (v["end"] - FRAME_CONVERSION, v)
+        if v["start"] > global_frame and (succeeding is None or v["start"] < succeeding[1]["start"]):
+            succeeding = (v["start"], v)
+
+    if preceding is not None and succeeding is not None:
+        dist_preceding  = global_frame - preceding[0]
+        dist_succeeding = succeeding[0] - global_frame
+        return [preceding, succeeding] if dist_preceding <= dist_succeeding else [succeeding, preceding]
+    elif preceding is not None:
+        return [preceding]
+    elif succeeding is not None:
+        return [succeeding]
+    return []
+
+def _read_frame_from_video(video_entry, resolved_frame, out_path):
+    local_frame = int((resolved_frame - video_entry["start"]) / FRAME_CONVERSION)
+    cap = cv2.VideoCapture(video_entry["path"])
+    if not cap.isOpened():
+        cap.release()
+        return False
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(local_frame, total - 1)))
+    ret, frame = cap.read()
+    cap.release()
+    if ret:
+        cv2.imwrite(out_path, frame)
+        return True
     return False
+
+def extract_frame_to_path(video_map, global_frame, out_path):
+    # Resolve to the nearest available frame (preceding vs. succeeding,
+    # whichever is closer; preceding wins ties) rather than assuming any
+    # particular video. Never falls back to the first video arbitrarily.
+    # Returns the resolved global frame number on success (which may differ
+    # from global_frame if it had to be substituted), or None on failure.
+    for resolved_frame, video_entry in find_nearest_frame_candidates(video_map, global_frame):
+        if _read_frame_from_video(video_entry, resolved_frame, out_path):
+            return resolved_frame
+    return None
 
 # Gap boundary classification
 def classify_gap_type(gap_start_frame, gap_end_frame, in_nest_lookup):
@@ -157,7 +200,9 @@ def build_initial_tasks(df_negative, df_all):
             continue
         
         # Type 11: animal was in-nest on both sides → skip (logic-filled) 
-        # 1.lmt_gap_fill.py should have already marked these frames IN_NEST=1, but if any -1 frames appear here they belong to type-11 gaps and are also not binary-searched (they will default to OUT=0 like other skipped frames, though in practice 1.lmt_gap_fill.py should prevent this).
+        # 1.lmt_gap_fill.py should have already marked these frames IN_NEST=1, 
+        # but if any -1 frames appear here they belong to type-11 gaps and are also not binary-searched 
+        # (they will default to OUT=0 like other skipped frames, though in practice 1.lmt_gap_fill.py should prevent this).
         if gtype == GAP_TYPE_11:
             for f in range(gs + 1, ge):
                 skipped_frames.add(f)
@@ -810,8 +855,8 @@ class BinarySearchGUI:
     #  Frame loading 
     def _load_frame_into_label(self, label, frame_number, cache_key):
         frame_path = os.path.join(self.temp_dir, f"frame_{cache_key}.png")
-        success = extract_frame_to_path(self.video_map, frame_number, frame_path)
-        if success and os.path.exists(frame_path):
+        resolved_frame = extract_frame_to_path(self.video_map, frame_number, frame_path)
+        if resolved_frame is not None and os.path.exists(frame_path):
             img   = Image.open(frame_path)
             img.thumbnail((480, 380))
             photo = ImageTk.PhotoImage(img)
@@ -820,6 +865,13 @@ class BinarySearchGUI:
         else:
             label.config(image="", text="[Frame not available]", fg="#888888")
             label.image = None
+        return resolved_frame
+
+    @staticmethod
+    def _frame_label_text(requested_frame, resolved_frame):
+        if resolved_frame is None or resolved_frame == requested_frame:
+            return f"Frame {requested_frame}"
+        return f"Frame {resolved_frame}  (nearest available \u2014 requested {requested_frame})"
 
     #  Display 
     def _refresh_display(self, task, answer_text="", answer_color="black"):
@@ -844,14 +896,14 @@ class BinarySearchGUI:
         b_right = task["boundary_right"]
         mid     = task["show_frame"]
 
-        self.lbl_left_frame_num.config(text=f"Frame {b_left}")
-        self._load_frame_into_label(self.img_left, b_left, f"bl_{b_left}")
+        resolved_left = self._load_frame_into_label(self.img_left, b_left, f"bl_{b_left}")
+        self.lbl_left_frame_num.config(text=self._frame_label_text(b_left, resolved_left))
 
-        self.lbl_center_frame_num.config(text=f"Frame {mid}")
-        self._load_frame_into_label(self.img_center, mid, f"mid_{mid}")
+        resolved_mid = self._load_frame_into_label(self.img_center, mid, f"mid_{mid}")
+        self.lbl_center_frame_num.config(text=self._frame_label_text(mid, resolved_mid))
 
-        self.lbl_right_frame_num.config(text=f"Frame {b_right}")
-        self._load_frame_into_label(self.img_right, b_right, f"br_{b_right}")
+        resolved_right = self._load_frame_into_label(self.img_right, b_right, f"br_{b_right}")
+        self.lbl_right_frame_num.config(text=self._frame_label_text(b_right, resolved_right))
 
     #  Task loading 
     def _load_next_task(self):
