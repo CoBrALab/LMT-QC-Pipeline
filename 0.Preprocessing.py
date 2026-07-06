@@ -1,22 +1,16 @@
 """
-=========================================================
 Script0 - Remove Invalid Detection Rows
-=========================================================
 
-Purpose
--------
-Creates a copy of an LMT Output SQLite database and removes
-rows from the DETECTION table where
-
-    FRONT_X = -1
+Purpose: Creates a copy of an LMT Output SQLite database and removes rows from the DETECTION table where FRONT_X = -1 
+(and when FRONT_X = -1, it must also mean that 
     FRONT_Y = -1
-    FRONT_Z = -1
+    FRONT_Z = -1 
     BACK_X  = -1
     BACK_Y  = -1
-    BACK_Z  = -1
+    BACK_Z  = -1)
+    
+The original SQLite is NOT modified.
 
-The original SQLite is NEVER modified.
-=========================================================
 """
 
 import os
@@ -26,67 +20,41 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
-
-# ---------------------------------------------------------
 # GUI
-# ---------------------------------------------------------
 
 def browse_input():
-    filename = filedialog.askopenfilename(
-        title="Select LMT Output SQLite",
-        filetypes=[("SQLite Database", "*.sqlite *.db"), ("All Files", "*.*")]
-    )
-
+    filename = filedialog.askopenfilename(title="Select LMT Output SQLite", filetypes=[("SQLite Database", "*.sqlite *.db"), ("All Files", "*.*")])
     if filename:
         input_var.set(filename)
 
-
 def browse_output():
-    folder = filedialog.askdirectory(
-        title="Select Output Folder"
-    )
-
+    folder = filedialog.askdirectory(title="Select Output Folder")
     if folder:
         output_var.set(folder)
 
-
 def start_processing():
-
     input_db = input_var.get().strip()
     output_folder = output_var.get().strip()
 
     if not os.path.isfile(input_db):
-        messagebox.showerror(
-            "Error",
-            "Please select a valid LMT Output SQLite."
-        )
+        messagebox.showerror("Error", "Please select a valid LMT Output SQLite.")
         return
 
     if not os.path.isdir(output_folder):
-        messagebox.showerror(
-            "Error",
-            "Please select a valid Output Folder."
-        )
+        messagebox.showerror("Error", "Please select a valid Output Folder.")
         return
 
     root.destroy()
-
     process_database(input_db, output_folder)
 
-
-# ---------------------------------------------------------
+ 
 # Processing
-# ---------------------------------------------------------
-
 def process_database(input_db, output_folder):
 
     basename = os.path.basename(input_db)
     name, ext = os.path.splitext(basename)
 
-    output_db = os.path.join(
-        output_folder,
-        f"{name}_processed{ext}"
-    )
+    output_db = os.path.join(output_folder, f"{name}_processed{ext}")
 
     print("=" * 60)
     print("Copying SQLite...")
@@ -125,11 +93,8 @@ def process_database(input_db, output_folder):
     print(f"Rows matching filter: {rows_to_delete:,}")
 
     if rows_to_delete == 0:
-
         print("No rows need deleting.")
-
         conn.close()
-
         return
 
     print("\nDeleting rows...")
@@ -179,10 +144,7 @@ def process_database(input_db, output_folder):
     print("=" * 60)
 
 
-# ---------------------------------------------------------
 # Main GUI
-# ---------------------------------------------------------
-
 root = tk.Tk()
 root.title("Script0 - SQLite Cleanup")
 
@@ -193,47 +155,16 @@ frame = tk.Frame(root, padx=15, pady=15)
 frame.pack()
 
 # Input SQLite
-tk.Label(
-    frame,
-    text="LMT Output SQLite:"
-).grid(row=0, column=0, sticky="w")
-
-tk.Entry(
-    frame,
-    width=60,
-    textvariable=input_var
-).grid(row=1, column=0, padx=(0, 10))
-
-tk.Button(
-    frame,
-    text="Browse...",
-    command=browse_input
-).grid(row=1, column=1)
+tk.Label(frame, text="LMT Output SQLite:").grid(row=0, column=0, sticky="w")
+tk.Entry(frame, width=60, textvariable=input_var).grid(row=1, column=0, padx=(0, 10))
+tk.Button(frame, text="Browse...", command=browse_input).grid(row=1, column=1)
 
 # Output folder
-tk.Label(
-    frame,
-    text="Output Folder:"
-).grid(row=2, column=0, sticky="w", pady=(15, 0))
-
-tk.Entry(
-    frame,
-    width=60,
-    textvariable=output_var
-).grid(row=3, column=0, padx=(0, 10))
-
-tk.Button(
-    frame,
-    text="Browse...",
-    command=browse_output
-).grid(row=3, column=1)
+tk.Label(frame, text="Output Folder:").grid(row=2, column=0, sticky="w", pady=(15, 0))
+tk.Entry(frame, width=60, textvariable=output_var).grid(row=3, column=0, padx=(0, 10))
+tk.Button(frame, text="Browse...", command=browse_output).grid(row=3, column=1)
 
 # Start
-tk.Button(
-    frame,
-    text="Start Processing",
-    command=start_processing,
-    width=25
-).grid(row=4, column=0, columnspan=2, pady=20)
+tk.Button(frame, text="Start Processing", command=start_processing, width=25).grid(row=4, column=0, columnspan=2, pady=20)
 
 root.mainloop()
