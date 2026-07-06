@@ -43,29 +43,67 @@ def build_video_map(video_paths):
     video_map.sort(key=lambda x: x["start"])
     return video_map
 
+def find_nearest_frame_candidates(video_map, global_frame):
+    """
+    Resolve a requested global frame to the video(s) that can actually supply it.
+    See 2.lmt_binary_search.py for full documentation of the resolution rule
+    (exact match, else nearest of preceding/succeeding, preceding wins ties).
+    Returns a list of (resolved_global_frame, video_entry) tuples, ordered by
+    preference. Empty list if video_map is empty.
+    """
+    if not video_map:
+        return []
+
+    for v in video_map:
+        if v["start"] <= global_frame < v["end"]:
+            return [(global_frame, v)]
+
+    preceding  = None
+    succeeding = None
+    for v in video_map:
+        if v["end"] <= global_frame and (preceding is None or v["end"] > preceding[1]["end"]):
+            preceding = (v["end"] - FRAME_CONVERSION, v)
+        if v["start"] > global_frame and (succeeding is None or v["start"] < succeeding[1]["start"]):
+            succeeding = (v["start"], v)
+
+    if preceding is not None and succeeding is not None:
+        dist_preceding  = global_frame - preceding[0]
+        dist_succeeding = succeeding[0] - global_frame
+        return [preceding, succeeding] if dist_preceding <= dist_succeeding else [succeeding, preceding]
+    elif preceding is not None:
+        return [preceding]
+    elif succeeding is not None:
+        return [succeeding]
+    return []
+
+def _read_frame_from_video(video_entry, resolved_frame, out_path):
+    local_frame = int((resolved_frame - video_entry["start"]) / FRAME_CONVERSION)
+    cap = cv2.VideoCapture(video_entry["path"])
+    if not cap.isOpened():
+        cap.release()
+        return False
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(local_frame, total - 1)))
+    ret, frame = cap.read()
+    cap.release()
+    if ret:
+        cv2.imwrite(out_path, frame)
+        return True
+    return False
+
 def extract_frame(video_map, global_frame, out_path):
-    # Search for the requested frame. If no video covers it, walk backward
-    # one frame at a time until we find a frame that exists in the video map.
-    # Never fall back to the first video arbitrarily.
-    search_frame = global_frame
-    while search_frame >= 0:
-        for v in video_map:
-            if v["start"] <= search_frame < v["end"]:
-                local_frame = int((search_frame - v["start"]) / FRAME_CONVERSION)
-                cap = cv2.VideoCapture(v["path"])
-                if not cap.isOpened():
-                    cap.release()
-                    break
-                total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(local_frame, total - 1)))
-                ret, frame = cap.read()
-                cap.release()
-                if ret:
-                    cv2.imwrite(out_path, frame)
-                    return local_frame
-                break  # video matched but read failed; try previous frame
-        search_frame -= 1
-    return None
+    """
+    Resolve global_frame to the nearest actually-available frame (preceding
+    vs. succeeding, whichever is closer; preceding wins ties) and extract it.
+    Never falls back to the first video arbitrarily.
+
+    Returns (resolved_global_frame, video_name) on success, or (None, None)
+    if no candidate could be read.
+    """
+    for resolved_frame, video_entry in find_nearest_frame_candidates(video_map, global_frame):
+        if _read_frame_from_video(video_entry, resolved_frame, out_path):
+            return resolved_frame, os.path.basename(video_entry["path"])
+    return None, None
 
 # Pool filtering
 def filter_pool(df_full, qc_mode):
@@ -120,8 +158,6 @@ def filter_pool(df_full, qc_mode):
 
     return df_full[mask].copy().reset_index(drop=True), label
 
-
-
 # Main pipeline
 def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
     timestamp     = datetime.now().strftime("%Y-%m-%d")
@@ -161,28 +197,25 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
     counter = 1
 
     for _, row in df_sample.iterrows():
-        global_frame = int(row["FRAMENUMBER"])
+        requested_frame = int(row["FRAMENUMBER"])
 
-        # Determine which video the QC frame nominally belongs to.
-        # Use the same backward-search logic: find the video whose range
-        # covers global_frame, or walk back until one does.
-        video_name = ""
-        search_f = global_frame
-        while search_f >= 0 and not video_name:
-            for v in video_map:
-                if v["start"] <= search_f < v["end"]:
-                    video_name = os.path.basename(v["path"])
-                    break
-            if not video_name:
-                search_f -= 1
-
-        screenshot_name = (
-            f"S{counter:04d}_A{animal_id}_G{global_frame}_{video_name}.png")
+        # Resolve requested_frame to the nearest frame that actually exists in
+        # a video (exact match if available, otherwise the closer of the
+        # immediately preceding/succeeding detected frame; preceding wins
+        # ties). This also tells us which video that frame came from, so a
+        # single call replaces the old separate backward-only video-name walk.
+        screenshot_name = f"S{counter:04d}_A{animal_id}_TMP.png"
         screenshot_path = os.path.join(screenshot_folder, screenshot_name)
-
-        local_frame = extract_frame(video_map, global_frame, screenshot_path)
-        if local_frame is None:
+        resolved_frame, video_name = extract_frame(video_map, requested_frame, screenshot_path)
+        if resolved_frame is None:
             continue
+
+        # Rename using the resolved frame/video now that we know them, so the
+        # filename always reflects the frame actually captured in the image.
+        final_screenshot_name = (
+            f"S{counter:04d}_A{animal_id}_G{resolved_frame}_{video_name}.png")
+        final_screenshot_path = os.path.join(screenshot_folder, final_screenshot_name)
+        os.replace(screenshot_path, final_screenshot_path)
 
         # Gap boundary frames for three-panel display in 4.lmt_qc_validator.py.
         # Only present for ASSUMED rows; None for DETECTED.
@@ -193,13 +226,14 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
             "sample_id":              counter,
             "animal_id":              animal_id,
             "video":                  video_name,
-            "frame_global":           global_frame,
+            "frame_global":           resolved_frame,
+            "requested_frame":        requested_frame,
             "IN_NEST":                row["IN_NEST"],
             "ASSUMPTION_TYPE":        row.get("ASSUMPTION_TYPE", "ASSUMED"),
             "FILL_SOURCE":            row.get("FILL_SOURCE", qc_mode),
             "GAP_START_FRAME":        gap_start,
             "GAP_END_FRAME":          gap_end,
-            "screenshot":             screenshot_name,
+            "screenshot":             final_screenshot_name,
             # QC_MODE is read by 4.lmt_qc_validator.py to determine display/metrics context
             "QC_MODE":                qc_mode,
         })
