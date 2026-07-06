@@ -1,4 +1,4 @@
-# LMT QC Pipeline — Documentation & Code Review
+# LMT QC Pipeline Documentation
 
 This README documents a 5-script pipeline that takes a Live Mouse Tracker (LMT)
 SQLite output, cleans it, infers a mouse's in-nest/out-of-nest state for frames
