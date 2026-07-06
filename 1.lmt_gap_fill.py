@@ -5,13 +5,11 @@ from datetime import datetime
 from tkinter import *
 from tkinter import filedialog, messagebox
 
-
 def seconds_to_hms(seconds): # hms means hh:mm:ss format
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
     secs = int(seconds % 60)
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-
 
 # Main analysis
 def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_ymin, nest_ymax, buffer_xmin, buffer_xmax, buffer_ymin, buffer_ymax):
