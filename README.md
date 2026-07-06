@@ -6,68 +6,205 @@ where the tracker lost detection, resolves ambiguous gaps via a human-in-the-loo
 binary-search video review, and then draws QC samples to measure the pipeline's
 accuracy against human judgment.
 
-Scripts (as supplied): `0.Preprocessing.py`, `1.lmt_gap_fill.py`,
+Scripts: `0.Preprocessing.py`, `1.lmt_gap_fill.py`,
 `2.lmt_binary_search.py`, `3.lmt_qc_sampler.py`, `4.lmt_qc_validator.py`.
 
-### Script: `0.Preprocessing.py`
+---
+# Script: `0.Preprocessing.py`
 
-**Core Logic**
-Copies a raw LMT Output SQLite database (never modifying the original) and
-removes `DETECTION` rows flagged as invalid (`FRONT_X = -1`), then reclaims disk
-space with `VACUUM`. GUI (Tkinter) driven; no CLI arguments.
+## Core Logic
 
-**Inputs**
+This script creates a cleaned copy of a raw LMT Output SQLite database **without modifying the original file**. It removes invalid rows from the `DETECTION` table where:
 
-| File | Type | Purpose |
-|---|---|---|
-| LMT Output SQLite (user-selected, any name, `.sqlite`/`.db`) | SQLite database | Raw LMT tracking output to be cleaned. |
+```sql
+FRONT_X = -1
+```
 
-SQLite input details:
-- **Filename**: user-selected, arbitrary.
-- **Table used**: `DETECTION`
-- **Columns referenced in code**: `FRONT_X` (used in `WHERE`/`DELETE` filter).
-- **Columns referenced only in the docstring (not validated in code)**:
-  `FRONT_Y`, `FRONT_Z`, `BACK_X`, `BACK_Y`, `BACK_Z` — the docstring claims these
-  are always `-1` whenever `FRONT_X = -1`, but the code never checks this.
-- Other columns/tables of the source LMT database: **Not determinable from
-  code** (the script only issues `COUNT(*)`/`DELETE` against `DETECTION` using
-  `FRONT_X`; it never runs `SELECT *` or inspects the schema).
+After deletion, it runs `VACUUM` to reclaim disk space.
 
-**Outputs**
+Before deleting any rows, the script validates the documented assumption that:
 
-| File | Type | Purpose |
-|---|---|---|
-| `{original_name}_processed{ext}` | SQLite database | Cleaned copy of the input DB with invalid `DETECTION` rows removed and space reclaimed. |
+```text
+FRONT_X = -1
+```
 
-SQLite output details:
-- **Filename**: `{name}_processed{ext}` where `name`/`ext` come from the input
-  file's basename, written into the user-selected output folder.
-- **Table(s)**: identical to the input (it is a full copy via `shutil.copy2`,
-  then `DETECTION` rows are deleted in place). No new tables are created.
-- **Columns**: identical to input `DETECTION` schema, minus the deleted rows.
-  Exact column list: **Not determinable from code**.
+also implies:
 
-**Do NOT Modify**
-- The output filename convention `{name}_processed{ext}` is not referenced by
-  any downstream script (scripts 1–4 let the user pick any `.sqlite`/`.db` file
-  via a file dialog), so it is a soft convention, not a hard dependency — but
-  renaming the logic would break the "processed" naming users may rely on.
-- The single-column filter (`FRONT_X = -1`) is the row-invalidity rule the rest
-  of the pipeline implicitly assumes has already been applied upstream (no
-  downstream script re-checks for `-1` position values).
-- The original input database is never modified — downstream tooling / users
-  may rely on being able to re-run this script against the same source file.
+```text
+FRONT_Y = -1
+FRONT_Z = -1
+BACK_X  = -1
+BACK_Y  = -1
+BACK_Z  = -1
+```
 
-**Open Source Notes**
-- **External dependencies**: `tkinter` (GUI, typically bundled with Python but
-  not always on Linux distros — may require `python3-tk`), Python standard
-  library (`os`, `shutil`, `sqlite3`, `time`). No third-party pip packages.
-- **Configuration files / environment variables**: none used.
-- **Expected directory structure**: none required; input file and output
-  folder are chosen interactively via file dialogs.
-- **Platform assumptions**: requires a desktop environment capable of
-  displaying a Tkinter window (not headless-safe).
+If this assumption is violated, the script reports the number of mismatched rows and asks the user whether to continue.
 
+Additional safety features include:
+
+- Verifies that the `DETECTION` table exists before processing.
+- Prevents accidental overwriting of an existing output file by requesting confirmation.
+- Wraps all database operations in exception handling to ensure the SQLite connection is always closed.
+- Uses a **Tkinter GUI** only (no command-line arguments).
+
+---
+
+# Inputs
+
+| File Type | Purpose |
+|-----------|---------|
+| LMT Output SQLite (`.sqlite` / `.db`) | Raw LMT tracking database selected by the user. |
+
+### SQLite Input Details
+
+**Filename**
+
+- User-selected (any valid filename).
+
+**Required Table**
+
+- `DETECTION`
+
+The script checks `sqlite_master` to verify that this table exists. If it is missing, an error dialog is shown instead of allowing the script to crash.
+
+**Columns Referenced**
+
+| Column | Purpose |
+|---------|---------|
+| `FRONT_X` | Determines which rows are deleted (`FRONT_X = -1`). |
+| `FRONT_Y` | Used only for assumption validation. |
+| `FRONT_Z` | Used only for assumption validation. |
+| `BACK_X` | Used only for assumption validation. |
+| `BACK_Y` | Used only for assumption validation. |
+| `BACK_Z` | Used only for assumption validation. |
+
+The additional columns **do not affect which rows are deleted**.
+
+**Other Database Objects**
+
+Not determinable from the source code.
+
+The script only executes:
+
+- `sqlite_master` queries
+- `COUNT(*)`
+- `DELETE`
+- `VACUUM`
+
+It never inspects or modifies the remainder of the database schema.
+
+---
+
+# Outputs
+
+| File Type | Purpose |
+|-----------|---------|
+| `{original_name}_processed{ext}` SQLite database | Cleaned copy of the input database with invalid `DETECTION` rows removed and disk space reclaimed. |
+
+### SQLite Output Details
+
+**Filename**
+
+```text
+{name}_processed{ext}
+```
+
+where:
+
+- `name` = input filename without extension
+- `ext` = original extension
+
+The file is written to the user-selected output folder.
+
+If the output file already exists, the user is prompted before overwriting it.
+
+**Tables**
+
+- Identical to the input database.
+
+The database is first copied using `shutil.copy2()`, then modified in-place.
+
+No new tables are created.
+
+**Columns**
+
+Identical to the input schema, except that rows matching the deletion criteria are removed.
+
+The exact schema is not determined by the source code.
+
+---
+
+# Do **NOT** Modify
+
+The following behaviors are relied upon by the processing workflow:
+
+- The output naming convention
+
+  ```text
+  {name}_processed{ext}
+  ```
+
+  is **not required** by downstream scripts (Scripts 1–4 allow users to select any SQLite database), but users may rely on this naming convention.
+
+- The deletion rule **must remain**
+
+  ```sql
+  FRONT_X = -1
+  ```
+
+  The newly added validation only checks data consistency—it **must not** alter the deletion criteria.
+
+- The original database **must never be modified**. The script must always operate on a copied database so users can safely rerun preprocessing on the original file.
+
+- If the user selects **No** at either:
+  - the overwrite confirmation, or
+  - the failed assumption validation,
+
+  the script must terminate without producing a new output database.
+
+---
+
+# Open Source Notes
+
+## Dependencies
+
+### Python Standard Library
+
+- `os`
+- `shutil`
+- `sqlite3`
+- `time`
+- `tkinter`
+
+No third-party Python packages are required.
+
+> **Linux Note:** `tkinter` is typically bundled with Python but may require installation of `python3-tk` on some Linux distributions.
+
+---
+
+## Configuration
+
+- No configuration files
+- No environment variables
+
+---
+
+## Directory Structure
+
+No fixed directory structure is required.
+
+Both the input database and output directory are selected interactively using file dialogs.
+
+---
+
+## Platform Assumptions
+
+- Requires a desktop environment capable of displaying **Tkinter** windows.
+- Not intended for headless execution.
+
+`VACUUM` executes synchronously on the GUI thread.
+
+For very large databases, the application window may appear temporarily unresponsive during this operation. This behavior is intentional and has not been changed, as making the process asynchronous would require introducing threading and significantly altering the execution model.
 ---
 
 ### Script: `1.lmt_gap_fill.py`
