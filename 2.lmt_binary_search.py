@@ -1,7 +1,9 @@
 import copy
 import os
+import re
 import cv2
 import sqlite3
+import numpy as np
 import pandas as pd
 from datetime import datetime
 import time
@@ -42,31 +44,99 @@ def _seg_dur_min(seg_start, seg_end):
 
 # Video helpers
 def get_start_frame(video_name):
-    try:
-        return int(video_name.split("t")[1].split(".")[0])
-    except Exception:
-        return None
+    """
+    Extract the starting global frame number encoded in a video filename.
 
-def get_video_frame_count(video_path):
+    Expects a segment of the form "t<digits>" immediately preceding the file
+    extension (e.g. "..._t12345.mp4"). The match is anchored to the end of
+    the filename (rather than splitting on the first "t" anywhere in the
+    string, as before) so that a filename containing an unrelated "t"
+    earlier on (e.g. in an experiment/cage name) is no longer misparsed.
+    """
+    match = re.search(r't(\d+)\.[A-Za-z0-9]+$', video_name)
+    if match:
+        return int(match.group(1))
+    return None
+
+def get_video_frame_count_and_fps(video_path):
+    """
+    Open the video once and return (frame_count, fps).
+
+    Combines what used to be two separate opens (one for frame count, one
+    for fps) into a single VideoCapture session.
+    """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        return 0
+        cap.release()
+        return 0, 0.0
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps   = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
     cap.release()
-    return total
+    return total, fps
+
+# Expected video frame rate given the DB_FPS / FRAME_CONVERSION assumption.
+# Videos whose actual fps deviates from this are flagged (not blocked) so the
+# user can judge whether frame alignment is trustworthy for that file.
+EXPECTED_VIDEO_FPS = DB_FPS / FRAME_CONVERSION
+FPS_TOLERANCE      = 0.5
 
 def build_video_map(video_paths):
-    video_map = []
+    """
+    Returns (video_map, skipped_videos, fps_mismatches).
+
+    skipped_videos : filenames that could not be parsed for a starting frame
+                     number and were therefore excluded from video_map.
+                     (Previously dropped completely silently.)
+    fps_mismatches : descriptive strings for videos whose actual frame rate
+                     does not match the DB_FPS/FRAME_CONVERSION assumption.
+                     (Previously never checked at all.)
+    """
+    video_map      = []
+    skipped_videos = []
+    fps_mismatches = []
+
     for v in video_paths:
         name  = os.path.basename(v)
         start = get_start_frame(name)
         if start is None:
+            skipped_videos.append(name)
             continue
-        frames = get_video_frame_count(v)
-        end    = start + frames * FRAME_CONVERSION
+        frames, fps = get_video_frame_count_and_fps(v)
+        end = start + frames * FRAME_CONVERSION
         video_map.append({"start": start, "end": end, "path": v})
+
+        if fps > 0 and abs(fps - EXPECTED_VIDEO_FPS) > FPS_TOLERANCE:
+            fps_mismatches.append(
+                f"{name}: actual {fps:.2f} fps vs expected {EXPECTED_VIDEO_FPS:.2f} fps"
+            )
+
     video_map.sort(key=lambda x: x["start"])
-    return video_map
+    return video_map, skipped_videos, fps_mismatches
+
+# Cached, reusable VideoCapture handles.
+# Previously, every single frame extraction opened a brand-new
+# cv2.VideoCapture on the relevant video file and released it immediately
+# after reading one frame. During interactive binary-search review (three
+# panel images per task, potentially hundreds of tasks) this reopened the
+# same video files repeatedly - a significant, avoidable performance cost.
+# Handles are released via _release_all_captures() at the end of a run or
+# when the window is closed early.
+_video_capture_cache = {}
+
+def _get_capture(path):
+    cap = _video_capture_cache.get(path)
+    if cap is None or not cap.isOpened():
+        cap = cv2.VideoCapture(path)
+        _video_capture_cache[path] = cap
+    return cap
+
+def _release_all_captures():
+    for cap in _video_capture_cache.values():
+        try:
+            cap.release()
+        except Exception:
+            pass
+    _video_capture_cache.clear()
 
 def find_nearest_frame_candidates(video_map, global_frame):
     """
@@ -111,14 +181,12 @@ def find_nearest_frame_candidates(video_map, global_frame):
 
 def _read_frame_from_video(video_entry, resolved_frame, out_path):
     local_frame = int((resolved_frame - video_entry["start"]) / FRAME_CONVERSION)
-    cap = cv2.VideoCapture(video_entry["path"])
+    cap = _get_capture(video_entry["path"])
     if not cap.isOpened():
-        cap.release()
         return False
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(local_frame, total - 1)))
     ret, frame = cap.read()
-    cap.release()
     if ret:
         cv2.imwrite(out_path, frame)
         return True
@@ -137,8 +205,24 @@ def extract_frame_to_path(video_map, global_frame, out_path):
 
 # Gap boundary classification
 def classify_gap_type(gap_start_frame, gap_end_frame, in_nest_lookup):
-    before = in_nest_lookup.get(gap_start_frame, 0)
-    after  = in_nest_lookup.get(gap_end_frame,   0)
+    # Previously this defaulted missing/unexpected boundary lookups to 0
+    # (out-of-nest), which could silently mask a data-integrity problem in
+    # the source GAP_FILL_ANALYSIS table (e.g. a GAP_START_FRAME/GAP_END_FRAME
+    # value that is not itself a detected FRAMENUMBER). Both boundary frames
+    # are now required to be present; if not, an IntegrityError is raised so
+    # the problem surfaces clearly instead of being silently absorbed into a
+    # "type 00 / skip" bucket.
+    if gap_start_frame not in in_nest_lookup or gap_end_frame not in in_nest_lookup:
+        raise IntegrityError(
+            f"Gap boundary frame missing from detected-frame lookup: "
+            f"gap_start_frame={gap_start_frame}, gap_end_frame={gap_end_frame}. "
+            f"This indicates the source GAP_FILL_ANALYSIS data is inconsistent "
+            f"(a GAP_START_FRAME/GAP_END_FRAME value that is not itself a "
+            f"detected FRAMENUMBER)."
+        )
+
+    before = in_nest_lookup[gap_start_frame]
+    after  = in_nest_lookup[gap_end_frame]
 
     if before == 0 and after == 0:
         return GAP_TYPE_00   # out-of-nest → out-of-nest
@@ -152,8 +236,15 @@ def classify_gap_type(gap_start_frame, gap_end_frame, in_nest_lookup):
     if before == 1 and after == 1:
         return GAP_TYPE_11   # in-nest → in-nest
 
-    # Should never reach here given IN_NEST is always 0 or 1 for detected frames
-    return GAP_TYPE_00
+    # Should never reach here given IN_NEST is always 0 or 1 for detected frames.
+    # Previously silently returned GAP_TYPE_00; now raised explicitly so an
+    # unexpected IN_NEST value on a detected frame isn't miscategorized and
+    # silently skipped.
+    raise IntegrityError(
+        f"Unexpected IN_NEST value(s) for gap boundary frames "
+        f"(gap_start_frame={gap_start_frame} -> {before}, "
+        f"gap_end_frame={gap_end_frame} -> {after}); expected 0 or 1."
+    )
 
 # Binary-search task builder
 def build_initial_tasks(df_negative, df_all):
@@ -703,6 +794,12 @@ class BinarySearchGUI:
         self._photo_center = None
         self._photo_right  = None
 
+        # Ensure cached video captures and the temp frame-cache directory are
+        # cleaned up even if the user closes the window mid-review instead
+        # of reaching _finish() normally (previously this cleanup only ever
+        # happened inside _finish()).
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
         self._build_setup_ui()
 
     # Setup screen 
@@ -759,14 +856,43 @@ class BinarySearchGUI:
             messagebox.showinfo("Nothing to do","No frames with IN_NEST = -1 found.")
             return
 
-        self.video_map = build_video_map(self.video_paths)
+        self.video_map, skipped_videos, fps_mismatches = build_video_map(self.video_paths)
         if not self.video_map:
             messagebox.showerror("Error", "Could not parse any valid videos."); return
+
+        # Surface video parsing/frame-rate problems that were previously
+        # silent (videos could be silently dropped from the map, and no
+        # frame-rate assumption was ever checked against the actual files).
+        video_warnings = []
+        if skipped_videos:
+            video_warnings.append(
+                "The following video file(s) could not be parsed for a "
+                "starting frame number (expected a 't<digits>' segment "
+                "immediately before the file extension) and were excluded "
+                "from this run:\n\n" + "\n".join(skipped_videos)
+            )
+        if fps_mismatches:
+            video_warnings.append(
+                f"The following video file(s) have a frame rate that does "
+                f"not match the assumed {EXPECTED_VIDEO_FPS:.2f} fps "
+                f"(DB_FPS={DB_FPS} / FRAME_CONVERSION={FRAME_CONVERSION}). "
+                f"Frame alignment for these videos may be inaccurate:\n\n"
+                + "\n".join(fps_mismatches)
+            )
+        if video_warnings:
+            messagebox.showwarning("Video Warnings", "\n\n".join(video_warnings))
 
         self.temp_dir = os.path.join(self.output_folder, "_binsearch_tmp")
         os.makedirs(self.temp_dir, exist_ok=True)
 
-        (tasks, self.skipped_frames, self.skipped_gap_keys, self.gap_type_map, self.zero_zero_gap_keys, self.one_one_gap_keys) = build_initial_tasks(self.df_neg, self.df_all)
+        try:
+            (tasks, self.skipped_frames, self.skipped_gap_keys, self.gap_type_map, self.zero_zero_gap_keys, self.one_one_gap_keys) = build_initial_tasks(self.df_neg, self.df_all)
+        except IntegrityError as e:
+            messagebox.showerror(
+                "Data Integrity Error",
+                f"Could not classify gaps due to inconsistent source data.\n\n{e}"
+            )
+            return
 
         self.task_stack    = tasks
         self.redo_stack    = []
@@ -1034,9 +1160,18 @@ class BinarySearchGUI:
                     self.history.append((self.current_task, copy.deepcopy(self.decisions)))
                 self._load_next_task()
 
+    #  Window close cleanup 
+    def _on_close(self):
+        import shutil
+        _release_all_captures()
+        if self.temp_dir and os.path.isdir(self.temp_dir):
+            shutil.rmtree(self.temp_dir, ignore_errors=True)
+        self.root.destroy()
+
     #  Finish 
     def _finish(self):
         import shutil
+        _release_all_captures()
         if self.temp_dir and os.path.isdir(self.temp_dir):
             shutil.rmtree(self.temp_dir, ignore_errors=True)
         #  Close last gap timer 
@@ -1058,37 +1193,42 @@ class BinarySearchGUI:
         neg_frames        = set(self.df_neg["FRAMENUMBER"].tolist())
         searchable_frames = neg_frames - self.skipped_frames
 
-        final_clf = {}
-
-       # Build final classification for ASSUMED frames 
+        # Build final classification for ASSUMED frames.
+        # (Vectorized with NumPy instead of the original per-row iterrows()
+        # loops - which were run twice over the full ASSUMED-frame table -
+        # a real performance bottleneck on large datasets. final_clf and
+        # df_out end up with identical contents to the original code.)
         df_out = self.df.copy()
 
-        for _, row in df_out.iterrows():
-            fn       = int(row["FRAMENUMBER"])
-            original = row["IN_NEST"]
+        fn_arr       = df_out["FRAMENUMBER"].to_numpy(dtype=np.int64)
+        orig_in_nest = df_out["IN_NEST"].to_numpy()
 
-            if original != -1:
-                final_clf[fn] = int(original)
-            elif fn in self.skipped_frames:
-                final_clf[fn] = -1
-            else:
-                final_clf[fn] = self.decisions.get(fn, 0)
+        is_original_valid = orig_in_nest != -1
+        is_skipped        = np.array([int(fn) in self.skipped_frames for fn in fn_arr])
 
-        df_out["IN_NEST"] = df_out["FRAMENUMBER"].map(
-            lambda fn: final_clf[int(fn)])
+        final_in_nest = np.empty(len(fn_arr), dtype=np.int64)
+        final_in_nest[is_original_valid] = orig_in_nest[is_original_valid].astype(np.int64)
 
-        df_out["BINARY_SEARCH"] = df_out["FRAMENUMBER"].apply(
-            lambda fn: 1 if int(fn) in searchable_frames else 0)
+        remaining_mask     = ~is_original_valid
+        skipped_remaining  = remaining_mask & is_skipped
+        decision_remaining = remaining_mask & ~is_skipped
 
-        def fill_source(fn_val):
-            fn, val = fn_val
-            if fn in searchable_frames:
-                return "BINARY_SEARCH"
-            if val == -1:
-                return "UNKNOWN"
-            return "LOGIC"
+        final_in_nest[skipped_remaining] = -1
+        final_in_nest[decision_remaining] = [
+            self.decisions.get(int(fn), 0) for fn in fn_arr[decision_remaining]
+        ]
 
-        df_out["FILL_SOURCE"] = [fill_source((int(r["FRAMENUMBER"]), final_clf[int(r["FRAMENUMBER"])])) for _, r in df_out.iterrows()]
+        final_clf = dict(zip(fn_arr.tolist(), final_in_nest.tolist()))
+
+        df_out["IN_NEST"] = final_in_nest
+
+        is_searchable = np.array([int(fn) in searchable_frames for fn in fn_arr])
+        df_out["BINARY_SEARCH"] = is_searchable.astype(int)
+
+        df_out["FILL_SOURCE"] = np.where(
+            is_searchable, "BINARY_SEARCH",
+            np.where(final_in_nest == -1, "UNKNOWN", "LOGIC")
+        )
 
         # Merge detected rows back in to produce the full output table 
         df_detected_out = self.df_all[self.df_all["ASSUMPTION_TYPE"] == "DETECTED"].copy()
