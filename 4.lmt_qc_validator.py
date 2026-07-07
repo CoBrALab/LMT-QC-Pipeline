@@ -1,4 +1,5 @@
 import os
+import re
 import cv2
 import sqlite3
 import pandas as pd
@@ -18,79 +19,183 @@ QC_MODE_ASSUMED       = "ASSUMED"
 DB_FPS           = 30
 FRAME_CONVERSION = 2
 
-# Video helpers (backward-search; no first-video fallback)
+# Video helpers
 def get_start_frame(video_name):
-    try:
-        return int(video_name.split("t")[1].split(".")[0])
-    except Exception:
-        return None
+    """
+    Extract the starting global frame number encoded in a video filename.
 
-def get_video_frame_count(video_path):
+    Expects a segment of the form "t<digits>" immediately preceding the file
+    extension (e.g. "..._t12345.mp4"). The match is anchored to the end of
+    the filename (rather than splitting on the first "t" anywhere in the
+    string, as before) so that a filename containing an unrelated "t"
+    earlier on (e.g. in an experiment/cage name) is no longer misparsed.
+    """
+    match = re.search(r't(\d+)\.[A-Za-z0-9]+$', video_name)
+    if match:
+        return int(match.group(1))
+    return None
+
+def get_video_frame_count_and_fps(video_path):
+    """Open the video once and return (frame_count, fps)."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        return 0
+        cap.release()
+        return 0, 0.0
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps   = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
     cap.release()
-    return total
+    return total, fps
+
+# Expected video frame rate given the DB_FPS / FRAME_CONVERSION assumption.
+# Videos whose actual fps deviates from this are flagged (not blocked) so the
+# user can judge whether frame alignment is trustworthy for that file.
+EXPECTED_VIDEO_FPS = DB_FPS / FRAME_CONVERSION
+FPS_TOLERANCE      = 0.5
 
 def build_video_map(video_paths):
-    video_map = []
+    """
+    Returns (video_map, skipped_videos, fps_mismatches).
+
+    skipped_videos : filenames that could not be parsed for a starting frame
+                     number and were therefore excluded from video_map.
+                     (Previously dropped completely silently.)
+    fps_mismatches : descriptive strings for videos whose actual frame rate
+                     does not match the DB_FPS/FRAME_CONVERSION assumption.
+                     (Previously never checked at all.)
+    """
+    video_map      = []
+    skipped_videos = []
+    fps_mismatches = []
+
     for v in video_paths:
         name  = os.path.basename(v)
         start = get_start_frame(name)
         if start is None:
+            skipped_videos.append(name)
             continue
-        frames = get_video_frame_count(v)
-        end    = start + frames * FRAME_CONVERSION
+        frames, fps = get_video_frame_count_and_fps(v)
+        end = start + frames * FRAME_CONVERSION
         video_map.append({"start": start, "end": end, "path": v})
+
+        if fps > 0 and abs(fps - EXPECTED_VIDEO_FPS) > FPS_TOLERANCE:
+            fps_mismatches.append(
+                f"{name}: actual {fps:.2f} fps vs expected {EXPECTED_VIDEO_FPS:.2f} fps"
+            )
+
     video_map.sort(key=lambda x: x["start"])
-    return video_map
+    return video_map, skipped_videos, fps_mismatches
+
+def find_nearest_frame_candidates(video_map, global_frame):
+    """
+    Resolve a requested global frame to the video(s) that can actually supply it.
+    See 2.lmt_binary_search.py for full documentation of the resolution rule
+    (exact match, else nearest of preceding/succeeding, preceding wins ties).
+    Returns a list of (resolved_global_frame, video_entry) tuples, ordered by
+    preference. Empty list if video_map is empty.
+    """
+    if not video_map:
+        return []
+
+    for v in video_map:
+        if v["start"] <= global_frame < v["end"]:
+            return [(global_frame, v)]
+
+    preceding  = None
+    succeeding = None
+    for v in video_map:
+        if v["end"] <= global_frame and (preceding is None or v["end"] > preceding[1]["end"]):
+            preceding = (v["end"] - FRAME_CONVERSION, v)
+        if v["start"] > global_frame and (succeeding is None or v["start"] < succeeding[1]["start"]):
+            succeeding = (v["start"], v)
+
+    if preceding is not None and succeeding is not None:
+        dist_preceding  = global_frame - preceding[0]
+        dist_succeeding = succeeding[0] - global_frame
+        return [preceding, succeeding] if dist_preceding <= dist_succeeding else [succeeding, preceding]
+    elif preceding is not None:
+        return [preceding]
+    elif succeeding is not None:
+        return [succeeding]
+    return []
+
+# Cached, reusable VideoCapture handles (perf: avoids reopening the same
+# video file for every single frame extraction). Released when the window
+# is closed.
+_video_capture_cache = {}
+
+def _get_capture(path):
+    cap = _video_capture_cache.get(path)
+    if cap is None or not cap.isOpened():
+        cap = cv2.VideoCapture(path)
+        _video_capture_cache[path] = cap
+    return cap
+
+def _release_all_captures():
+    for cap in _video_capture_cache.values():
+        try:
+            cap.release()
+        except Exception:
+            pass
+    _video_capture_cache.clear()
+
+def _read_frame_from_video(video_entry, resolved_frame, out_path):
+    local_frame = int((resolved_frame - video_entry["start"]) / FRAME_CONVERSION)
+    cap = _get_capture(video_entry["path"])
+    if not cap.isOpened():
+        return False
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(local_frame, total - 1)))
+    ret, frame = cap.read()
+    if ret:
+        cv2.imwrite(out_path, frame)
+        return True
+    return False
 
 def extract_frame_to_label(video_map, global_frame, label_widget, thumb_size=(420, 340)):
     """
-    Extract a frame from video_map using backward search and display it in
-    a Tkinter Label widget.  Returns True on success, False on failure.
+    Extract a frame from video_map and display it in a Tkinter Label widget.
+
+    Uses the same nearest-available-frame resolution as scripts 2 and 3
+    (exact match, else nearest of preceding/succeeding, preceding wins ties)
+    instead of a backward-only, frame-by-frame linear scan. This is both
+    much faster for frames far from any covering video, and behaviorally
+    consistent with the frame substitution the reviewer already saw in
+    2.lmt_binary_search.py for the same gap (previously this backward-only
+    search could pick a different, worse substitute frame than what the
+    reviewer actually judged).
+
+    Returns True on success, False on failure.
     """
     import tempfile, uuid
     tmp_path = os.path.join(tempfile.gettempdir(),
                             f"lmt_qc_{uuid.uuid4().hex}.png")
-    search_frame = global_frame
     found = False
-    while search_frame >= 0:
-        for v in video_map:
-            if v["start"] <= search_frame < v["end"]:
-                local = int((search_frame - v["start"]) / FRAME_CONVERSION)
-                cap   = cv2.VideoCapture(v["path"])
-                if not cap.isOpened():
-                    cap.release()
-                    break
-                total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(local, total - 1)))
-                ret, frame = cap.read()
-                cap.release()
-                if ret:
-                    cv2.imwrite(tmp_path, frame)
-                    found = True
+    try:
+        for resolved_frame, video_entry in find_nearest_frame_candidates(video_map, global_frame):
+            if _read_frame_from_video(video_entry, resolved_frame, tmp_path):
+                found = True
                 break
-        if found:
-            break
-        search_frame -= 1
 
-    if found and os.path.exists(tmp_path):
-        img   = Image.open(tmp_path)
-        img.thumbnail(thumb_size)
-        photo = ImageTk.PhotoImage(img)
-        label_widget.config(image=photo, text="")
-        label_widget.image = photo   # keep reference
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        return True
+        if found and os.path.exists(tmp_path):
+            img   = Image.open(tmp_path)
+            img.thumbnail(thumb_size)
+            photo = ImageTk.PhotoImage(img)
+            label_widget.config(image=photo, text="")
+            label_widget.image = photo   # keep reference
+            return True
 
-    label_widget.config(image="", text="[Frame not available]", fg="#888888")
-    label_widget.image = None
-    return False
+        label_widget.config(image="", text="[Frame not available]", fg="#888888")
+        label_widget.image = None
+        return False
+    finally:
+        # Always clean up the temp file, even if Image.open() raised
+        # (previously the temp file was only removed after a successful
+        # open, leaking a file per failure).
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
 
 # Sentinel values stored in MANUAL_QC column
@@ -188,6 +293,39 @@ def save_database():
     df.to_sql("QC_ASSUMED_SAMPLES", conn, if_exists="replace", index=False)
     conn.close()
 
+def save_row(row_index):
+    """
+    Persist only the MANUAL_QC value for a single row.
+
+    Previously every single label click triggered a full save_database()
+    call, which rewrote the entire QC_ASSUMED_SAMPLES table to disk on every
+    click - an avoidable, ever-growing cost as the sample count increases.
+    The very first label of a session still creates the output file/table
+    via a full save_database() call (so the table and all other columns
+    exist on disk), after which each subsequent click only updates the one
+    row that actually changed.
+    """
+    date_string = datetime.now().strftime("%Y-%m-%d")
+    output_db   = os.path.join(screenshot_folder, f"lmt_qc_validator_{date_string}.sqlite")
+
+    if not os.path.exists(output_db):
+        save_database()
+        return
+
+    row        = df.iloc[row_index]
+    manual_val = row["MANUAL_QC"]
+    manual_val = None if pd.isna(manual_val) else int(manual_val)
+
+    conn = sqlite3.connect(output_db)
+    try:
+        conn.execute(
+            "UPDATE QC_ASSUMED_SAMPLES SET MANUAL_QC = ? WHERE sample_id = ?",
+            (manual_val, int(row["sample_id"]))
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
 def calculate_metrics():
     """
     Two-class confusion matrix.
@@ -202,11 +340,32 @@ def calculate_metrics():
     if len(completed_df) == 0:
         return None
 
+    # Defensive check: every row reaching this point should already have
+    # IN_NEST in (0, 1) thanks to the filtering in load_database(). If a
+    # stray IN_NEST == -1 (or any other unexpected value) ever slips
+    # through, it is excluded here and reported, rather than being silently
+    # counted as "predicted OUT" (which would previously happen via
+    # `IN_NEST != 1` and corrupt accuracy/sensitivity/specificity with no
+    # indication anything was wrong).
+    invalid_mask = ~completed_df["IN_NEST"].isin([0, 1])
+    if invalid_mask.any():
+        n_invalid = int(invalid_mask.sum())
+        messagebox.showwarning(
+            "Data Warning",
+            f"{n_invalid} labelled sample(s) have an IN_NEST value other "
+            f"than 0 or 1 and were excluded from the confusion matrix / "
+            f"metrics. This indicates a filtering issue upstream and "
+            f"should be investigated."
+        )
+        completed_df = completed_df[~invalid_mask].copy()
+        if len(completed_df) == 0:
+            return None
+
     predicted_in  = completed_df[completed_df["IN_NEST"] == 1]
     tp = len(predicted_in[predicted_in["MANUAL_QC"] == 1])
     fp = len(predicted_in[predicted_in["MANUAL_QC"] == 0])
 
-    predicted_out = completed_df[completed_df["IN_NEST"] != 1]
+    predicted_out = completed_df[completed_df["IN_NEST"] == 0]
     fn = len(predicted_out[predicted_out["MANUAL_QC"] == 1])
     tn = len(predicted_out[predicted_out["MANUAL_QC"] == 0])
 
@@ -333,7 +492,7 @@ def show_sample():
 def set_manual_qc(value):
     global current_index
     df.at[current_index, "MANUAL_QC"] = value
-    save_database()
+    save_row(current_index)
     # Auto-advance: pressing A or D immediately moves to the next sample.
     # next_sample() handles both advancement and end-of-session finalisation.
     next_sample()
@@ -360,8 +519,14 @@ def next_sample():
             return
 
         completed_df = df[df["MANUAL_QC"].notna()].copy()
+        # Keep this consistent with the defensive filtering in
+        # calculate_metrics(): only rows with a valid IN_NEST prediction
+        # (0 or 1) are included, and "predicted OUT" is the explicit == 0
+        # case rather than "!= 1" (which would previously have silently
+        # swept a stray IN_NEST == -1 row into the FN list).
+        completed_df = completed_df[completed_df["IN_NEST"].isin([0, 1])]
         fp_files = completed_df[(completed_df["IN_NEST"] == 1) & (completed_df["MANUAL_QC"] == 0)]["screenshot"].tolist()
-        fn_files = completed_df[(completed_df["IN_NEST"] != 1) & (completed_df["MANUAL_QC"] == 1)]["screenshot"].tolist()
+        fn_files = completed_df[(completed_df["IN_NEST"] == 0) & (completed_df["MANUAL_QC"] == 1)]["screenshot"].tolist()
 
         qc_mode      = metrics["qc_mode"]
         mode_label = {
@@ -468,7 +633,26 @@ def start_qc():
 
     # Build video map if videos were provided (optional; enables three-panel display)
     if video_paths_list:
-        video_map = build_video_map(video_paths_list)
+        video_map, skipped_videos, fps_mismatches = build_video_map(video_paths_list)
+
+        video_warnings = []
+        if skipped_videos:
+            video_warnings.append(
+                "The following video file(s) could not be parsed for a "
+                "starting frame number (expected a 't<digits>' segment "
+                "immediately before the file extension) and were excluded "
+                "from this session:\n\n" + "\n".join(skipped_videos)
+            )
+        if fps_mismatches:
+            video_warnings.append(
+                f"The following video file(s) have a frame rate that does "
+                f"not match the assumed {EXPECTED_VIDEO_FPS:.2f} fps "
+                f"(DB_FPS={DB_FPS} / FRAME_CONVERSION={FRAME_CONVERSION}). "
+                f"Frame alignment for these videos may be inaccurate:\n\n"
+                + "\n".join(fps_mismatches)
+            )
+        if video_warnings:
+            messagebox.showwarning("Video Warnings", "\n\n".join(video_warnings))
     else:
         video_map = []
 
@@ -522,6 +706,12 @@ root.title("LMT QC Validator")
 root.geometry("1600x950")
 
 bind_keys(root)
+
+def _on_close():
+    _release_all_captures()
+    root.destroy()
+
+root.protocol("WM_DELETE_WINDOW", _on_close)
 
 # Top setup bar
 top_frame = Frame(root)

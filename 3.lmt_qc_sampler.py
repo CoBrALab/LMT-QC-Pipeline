@@ -1,4 +1,6 @@
 import os
+import re
+import random
 import cv2
 import sqlite3
 import pandas as pd
@@ -17,31 +19,89 @@ QC_MODE_LOGIC         = "LOGIC"
 
 # Video helpers
 def get_start_frame(video_name):
-    try:
-        return int(video_name.split("t")[1].split(".")[0])
-    except Exception:
-        return None
+    """
+    Extract the starting global frame number encoded in a video filename.
 
-def get_video_frame_count(video_path):
+    Expects a segment of the form "t<digits>" immediately preceding the file
+    extension (e.g. "..._t12345.mp4"). The match is anchored to the end of
+    the filename (rather than splitting on the first "t" anywhere in the
+    string, as before) so that a filename containing an unrelated "t"
+    earlier on (e.g. in an experiment/cage name) is no longer misparsed.
+    """
+    match = re.search(r't(\d+)\.[A-Za-z0-9]+$', video_name)
+    if match:
+        return int(match.group(1))
+    return None
+
+def get_video_frame_count_and_fps(video_path):
+    """Open the video once and return (frame_count, fps)."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        return 0
+        cap.release()
+        return 0, 0.0
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps   = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
     cap.release()
-    return total
+    return total, fps
+
+# Expected video frame rate given the DB_FPS / FRAME_CONVERSION assumption.
+# Videos whose actual fps deviates from this are flagged (not blocked) so the
+# user can judge whether frame alignment is trustworthy for that file.
+EXPECTED_VIDEO_FPS = DB_FPS / FRAME_CONVERSION
+FPS_TOLERANCE      = 0.5
 
 def build_video_map(video_paths):
-    video_map = []
+    """
+    Returns (video_map, skipped_videos, fps_mismatches).
+
+    skipped_videos : filenames that could not be parsed for a starting frame
+                     number and were therefore excluded from video_map.
+                     (Previously dropped completely silently.)
+    fps_mismatches : descriptive strings for videos whose actual frame rate
+                     does not match the DB_FPS/FRAME_CONVERSION assumption.
+                     (Previously never checked at all.)
+    """
+    video_map      = []
+    skipped_videos = []
+    fps_mismatches = []
+
     for v in video_paths:
         name  = os.path.basename(v)
         start = get_start_frame(name)
         if start is None:
+            skipped_videos.append(name)
             continue
-        frames = get_video_frame_count(v)
-        end    = start + frames * FRAME_CONVERSION
+        frames, fps = get_video_frame_count_and_fps(v)
+        end = start + frames * FRAME_CONVERSION
         video_map.append({"start": start, "end": end, "path": v})
+
+        if fps > 0 and abs(fps - EXPECTED_VIDEO_FPS) > FPS_TOLERANCE:
+            fps_mismatches.append(
+                f"{name}: actual {fps:.2f} fps vs expected {EXPECTED_VIDEO_FPS:.2f} fps"
+            )
+
     video_map.sort(key=lambda x: x["start"])
-    return video_map
+    return video_map, skipped_videos, fps_mismatches
+
+# Cached, reusable VideoCapture handles (perf: avoids reopening the same
+# video file for every single frame extraction while sampling). Released at
+# the end of each "RUN SAMPLING" click, after all selected pools finish.
+_video_capture_cache = {}
+
+def _get_capture(path):
+    cap = _video_capture_cache.get(path)
+    if cap is None or not cap.isOpened():
+        cap = cv2.VideoCapture(path)
+        _video_capture_cache[path] = cap
+    return cap
+
+def _release_all_captures():
+    for cap in _video_capture_cache.values():
+        try:
+            cap.release()
+        except Exception:
+            pass
+    _video_capture_cache.clear()
 
 def find_nearest_frame_candidates(video_map, global_frame):
     """
@@ -78,14 +138,12 @@ def find_nearest_frame_candidates(video_map, global_frame):
 
 def _read_frame_from_video(video_entry, resolved_frame, out_path):
     local_frame = int((resolved_frame - video_entry["start"]) / FRAME_CONVERSION)
-    cap = cv2.VideoCapture(video_entry["path"])
+    cap = _get_capture(video_entry["path"])
     if not cap.isOpened():
-        cap.release()
         return False
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(local_frame, total - 1)))
     ret, frame = cap.read()
-    cap.release()
     if ret:
         cv2.imwrite(out_path, frame)
         return True
@@ -135,9 +193,20 @@ def filter_pool(df_full, qc_mode):
     elif qc_mode == QC_MODE_BINARY_SEARCH:
         if has_fill_source:
             mask = ((df_full["ASSUMPTION_TYPE"] == "ASSUMED") & (df_full["FILL_SOURCE"] == "BINARY_SEARCH") & (df_full["IN_NEST"].isin([0, 1])))
-        else:
+        elif "BINARY_SEARCH" in df_full.columns:
             # Backward compat: use legacy BINARY_SEARCH flag column
             mask = ((df_full["ASSUMPTION_TYPE"] == "ASSUMED") & (df_full["BINARY_SEARCH"] == 1) & (df_full["IN_NEST"].isin([0, 1])))
+        else:
+            # Neither column present (e.g. this file came directly from
+            # 1.lmt_gap_fill.py without going through 2.lmt_binary_search.py).
+            # Previously this raised a bare, confusing KeyError.
+            raise Exception(
+                "This SQLite has neither a FILL_SOURCE nor a BINARY_SEARCH "
+                "column, so the 'BINARY_SEARCH' pool cannot be sampled. "
+                "This usually means the file came directly from "
+                "1.lmt_gap_fill.py rather than 2.lmt_binary_search.py. "
+                "Please run 2.lmt_binary_search.py first, or deselect this pool."
+            )
         label = "Binary-search-filled rows"
 
     elif qc_mode == QC_MODE_LOGIC:
@@ -163,16 +232,33 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
     timestamp     = datetime.now().strftime("%Y-%m-%d")
     pool_folder   = os.path.join(output_folder, f"{qc_mode}_{timestamp}")
     screenshot_folder = os.path.join(pool_folder, "Screenshots")
+
+    # Guard against silently overwriting a previous run's screenshots/SQLite
+    # for this pool + date (e.g. re-running the sampler twice in one day).
+    if os.path.isdir(pool_folder) and os.listdir(pool_folder):
+        proceed = messagebox.askyesno(
+            "Output Already Exists",
+            f"The output folder already contains files:\n{pool_folder}\n\n"
+            f"Continuing will overwrite existing screenshots/SQLite in this folder.\n\n"
+            f"Do you want to continue?"
+        )
+        if not proceed:
+            raise Exception(
+                f"Aborted: output folder already exists and contains files:\n{pool_folder}"
+            )
+
     os.makedirs(screenshot_folder, exist_ok=True)
 
-    conn    = sqlite3.connect(analysis_db)
-    # Read from GAP_FILL_ANALYSIS (2.lmt_binary_search.py output); fall back to legacy
-    # ASSUMED_FRAMES table for backward compatibility with old outputs.
-    cursor  = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='GAP_FILL_ANALYSIS'")
-    table   = "GAP_FILL_ANALYSIS" if cursor.fetchone() else "ASSUMED_FRAMES"
-    df_full = pd.read_sql_query(f"SELECT * FROM {table} ORDER BY FRAMENUMBER", conn)
-    conn.close()
+    conn = sqlite3.connect(analysis_db)
+    try:
+        # Read from GAP_FILL_ANALYSIS (2.lmt_binary_search.py output); fall back to legacy
+        # ASSUMED_FRAMES table for backward compatibility with old outputs.
+        cursor  = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='GAP_FILL_ANALYSIS'")
+        table   = "GAP_FILL_ANALYSIS" if cursor.fetchone() else "ASSUMED_FRAMES"
+        df_full = pd.read_sql_query(f"SELECT * FROM {table} ORDER BY FRAMENUMBER", conn)
+    finally:
+        conn.close()
 
     if len(df_full) == 0:
         raise Exception(f"No rows found in {table} in the selected SQLite.")
@@ -187,11 +273,37 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
     if n_samples > total_available:
         raise Exception(f"Requested {n_samples:,} samples but only {total_available:,} are available in the '{mode_label}' pool.\nPlease enter a number \u2264 {total_available:,}.")
 
-    df_sample = df.sample(n=n_samples).sort_values("FRAMENUMBER").reset_index(drop=True)
+    # A fresh random seed is generated and used for this draw (so the run is
+    # still effectively random each time, matching prior behavior), but the
+    # seed is recorded and reported below so this exact sample can be
+    # reproduced later if needed (previously there was no way to reproduce
+    # a given sample set at all).
+    sample_seed = random.randint(0, 2**31 - 1)
+    df_sample = df.sample(n=n_samples, random_state=sample_seed).sort_values("FRAMENUMBER").reset_index(drop=True)
 
-    video_map = build_video_map(video_paths)
+    video_map, skipped_videos, fps_mismatches = build_video_map(video_paths)
     if not video_map:
         raise Exception("No valid LMT videos found.")
+
+    # Surface video parsing/frame-rate problems that were previously silent.
+    video_warnings = []
+    if skipped_videos:
+        video_warnings.append(
+            "The following video file(s) could not be parsed for a starting "
+            "frame number (expected a 't<digits>' segment immediately before "
+            "the file extension) and were excluded from this run:\n\n"
+            + "\n".join(skipped_videos)
+        )
+    if fps_mismatches:
+        video_warnings.append(
+            f"The following video file(s) have a frame rate that does not "
+            f"match the assumed {EXPECTED_VIDEO_FPS:.2f} fps "
+            f"(DB_FPS={DB_FPS} / FRAME_CONVERSION={FRAME_CONVERSION}). "
+            f"Frame alignment for these videos may be inaccurate:\n\n"
+            + "\n".join(fps_mismatches)
+        )
+    if video_warnings:
+        messagebox.showwarning("Video Warnings", "\n\n".join(video_warnings))
 
     results = []
     counter = 1
@@ -252,6 +364,7 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
         f"Pool: {mode_label}\n"
         f"  Available:  {total_available:,}\n"
         f"  Extracted:  {len(results):,}\n"
+        f"  Sample seed: {sample_seed}\n"
         f"  SQLite:     {out_db}\n"
         f"  Folder:     {screenshot_folder}"
     )
@@ -311,13 +424,18 @@ def start():
 
         summaries = []
         errors    = []
-        for qc_mode in selected_pools:
-            try:
-                summary = run(analysis_db, videos, out_folder,
-                              animal_id, n_samples, qc_mode)
-                summaries.append(summary)
-            except Exception as e:
-                errors.append(f"{qc_mode}: {e}")
+        try:
+            for qc_mode in selected_pools:
+                try:
+                    summary = run(analysis_db, videos, out_folder,
+                                  animal_id, n_samples, qc_mode)
+                    summaries.append(summary)
+                except Exception as e:
+                    errors.append(f"{qc_mode}: {e}")
+        finally:
+            # Release any cached video handles opened during this run instead
+            # of leaving them open for the lifetime of the application.
+            _release_all_captures()
 
         msg = ""
         if summaries:
