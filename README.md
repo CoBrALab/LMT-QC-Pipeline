@@ -463,103 +463,113 @@ The user simply selects an existing writable output directory.
 
 ---
 
-### Script: `2.lmt_binary_search.py`
+# Script: 2.lmt_binary_search.py
 
-**Core Logic**
-Loads a `1.lmt_gap_fill.py` output and isolates all `ASSUMED` frames still
-marked `IN_NEST = -1` (uncertain). Groups them into gaps, classifies each gap's
-boundary type (`00`/`01`/`10`/`11` — out/in state before and after the gap),
-and skips gaps that carry no directional information (`00`), are already
-implicitly resolved (`11`), or are shorter than a configurable duration
-threshold. Remaining gaps are queued for an interactive, GUI-driven binary
-search: the reviewer is shown a three-panel view (last detected frame before
-the gap, a candidate mid-point frame from the associated LMT video, and the
-first detected frame after the gap) and answers "IN NEST" or "OUT OF NEST",
-recursively narrowing the segment until the entry/exit point is resolved. Once
-all gaps are processed, it writes a final classification for every frame
-(with new `FILL_SOURCE`/`BINARY_SEARCH` bookkeeping columns) plus a detailed
-plain-text summary report with multiple internal integrity checks.
+## Core Logic
 
-**Inputs**
+Loads a 1.lmt_gap_fill.py output and isolates all ASSUMED frames still marked IN_NEST = -1 (uncertain). Groups them into gaps, classifies each gap's boundary type (00/01/10/11), and skips gaps that carry no directional information (00), are already implicitly resolved (11), or are shorter than a configurable duration threshold. Remaining gaps are queued for an interactive, GUI-driven binary search: the reviewer is shown a three-panel view and answers "IN NEST" or "OUT OF NEST," recursively narrowing the segment until the entry/exit point is resolved. Once all gaps are processed, it writes a final classification for every frame (with FILL_SOURCE/BINARY_SEARCH bookkeeping columns) plus a detailed plain-text summary report with multiple internal integrity checks.
+
+As of this update: video filenames are parsed with a more robust, end-anchored pattern; videos that can't be parsed, or whose actual frame rate doesn't match the assumed DB_FPS/FRAME_CONVERSION ratio, are reported to the user via a warning dialog instead of being silently dropped/ignored; video frames are read through a small cache of reused VideoCapture handles instead of reopening each video file for every single frame; the temp frame-cache directory and any open video handles are now also cleaned up if the user closes the window before finishing; and gap-boundary classification (classify_gap_type) now raises a clear, catchable error instead of silently defaulting to type 00 when the source data is inconsistent. The final per-frame classification table is now built with vectorized NumPy operations instead of row-by-row iteration; its contents are unchanged.
+
+---
+
+# Inputs
 
 | File | Type | Purpose |
 |---|---|---|
-| `lmt_gap_fill_<date>.sqlite` (script 1 output) | SQLite database | Per-frame classification with unresolved (`IN_NEST = -1`) gaps to review. |
-| One or more LMT video files (`*.mp4`) | Video | Source frames for the reviewer to visually classify in-nest/out-of-nest status. |
+| lmt_gap_fill_<date>.sqlite (script 1 output) | SQLite database | Per-frame classification with unresolved (IN_NEST = -1) gaps to review. |
+| One or more LMT video files (*.mp4) | Video | Source frames for the reviewer to visually classify in-nest/out-of-nest status. |
 
-SQLite input details:
-- **Filename**: user-selected (expected to be a `1.lmt_gap_fill.py` output).
-- **Table**: `GAP_FILL_ANALYSIS`
-- **Columns used**: `FRAMENUMBER`, `IN_NEST`, `ASSUMPTION_TYPE`,
-  `GAP_START_FRAME`, `GAP_END_FRAME` (all columns are read via `SELECT *`).
+## SQLite input details:
 
-Video input details:
-- Any number of `.mp4` files; filenames are expected to encode a starting
-  global frame number after a literal `"t"` character (parsed via
-  `video_name.split("t")[1].split(".")[0]`), e.g. a name containing `..._t<start_frame>.mp4`. Exact required naming convention beyond this
-  parse rule: **Not determinable from code**.
-- Assumed frame-rate relationship: DB frames run at `DB_FPS = 30`; the supplied
-  videos are assumed to be at half that rate (`FRAME_CONVERSION = 2`, i.e. 15fps),
-  so `local_video_frame = (global_frame - video_start) / FRAME_CONVERSION`.
+**Filename:** user-selected (expected to be a 1.lmt_gap_fill.py output).
 
-**Outputs**
+**Table:** GAP_FILL_ANALYSIS
+
+**Columns used:** FRAMENUMBER, IN_NEST, ASSUMPTION_TYPE, GAP_START_FRAME, GAP_END_FRAME (all columns are read via SELECT *).
+
+**Validation (new):** if a gap's GAP_START_FRAME/GAP_END_FRAME does not correspond to a detected FRAMENUMBER, or a detected frame's IN_NEST value is anything other than 0/1, gap classification now raises a clear "Data Integrity Error" dialog instead of silently miscategorizing the gap as type 00.
+
+---
+
+## Video input details:
+
+Any number of .mp4 files; filenames must contain a t<digits> segment immediately before the file extension (e.g. ..._t<start_frame>.mp4), matched with an end-anchored pattern so unrelated "t" characters earlier in the filename no longer cause misparsing. Videos that don't match this pattern are now excluded and reported to the user (previously excluded silently).
+
+Assumed frame-rate relationship: DB frames run at DB_FPS = 30; videos are assumed to be at half that rate (FRAME_CONVERSION = 2, i.e. 15fps). As of this update, each video's actual fps (read via OpenCV) is compared against this assumption, and any video whose fps differs by more than 0.5fps is listed in a warning dialog (frame alignment for that video may be inaccurate) — this is a warning only and does not block processing.
+
+---
+
+# Outputs
 
 | File | Type | Purpose |
 |---|---|---|
-| `lmt_binary_search_<YYYY-MM-DD>.sqlite` | SQLite database | Final per-frame in-nest classification with fill-method bookkeeping, for QC sampling in script 3. |
-| `LMT_Summary_<YYYY-MM-DD>.txt` | Text report | Human-readable audit of detection counts, gap types, binary-search results, and internal balance/integrity checks. |
-| `_binsearch_tmp/` (inside output folder) | Temp image cache | Scratch PNGs extracted from video during interactive review; deleted at successful completion. |
+| lmt_binary_search_<YYYY-MM-DD>.sqlite | SQLite database | Final per-frame in-nest classification with fill-method bookkeeping, for QC sampling in script 3. |
+| LMT_Summary_<YYYY-MM-DD>.txt | Text report | Human-readable audit of detection counts, gap types, binary-search results, and internal balance/integrity checks. |
+| _binsearch_tmp/ (inside output folder) | Temp image cache | Scratch PNGs extracted from video during interactive review; deleted at successful completion, and now also deleted if the window is closed early. |
 
-SQLite output details:
-- **Filename**: `lmt_binary_search_<date>.sqlite`
-- **Table**: `GAP_FILL_ANALYSIS`
-- **Columns**:
-  - `FRAMENUMBER` (int)
-  - `IN_NEST` (int: `1`, `0`, or `-1`) — final classification; `-1` should only
-    remain for frames the reviewer explicitly could not resolve/skipped
-    (documented as "unexpected" if non-zero).
-  - `ASSUMPTION_TYPE` (str: `"DETECTED"` or `"ASSUMED"`) — passed through from
-    script 1.
-  - `GAP_START_FRAME` / `GAP_END_FRAME` (int or `None`) — passed through from
-    script 1.
-  - `BINARY_SEARCH` (int: `0`/`1`) — `1` if this frame was routed to the
-    interactive reviewer (a "searchable" frame), else `0`.
-  - `FILL_SOURCE` (str: `"DETECTED"`, `"LOGIC"`, `"BINARY_SEARCH"`, or
-    `"UNKNOWN"`) — which mechanism ultimately produced the frame's
-    classification.
+---
 
-**Do NOT Modify**
-- Table name `GAP_FILL_ANALYSIS` is reused (overwritten with new columns) —
-  script 3 explicitly checks for a table named `GAP_FILL_ANALYSIS` first before
-  falling back to a legacy `ASSUMED_FRAMES` name.
-- The new columns `BINARY_SEARCH` and `FILL_SOURCE` (and their specific string
-  values `"DETECTED"`/`"LOGIC"`/`"BINARY_SEARCH"`/`"UNKNOWN"`) are depended upon
-  by both `3.lmt_qc_sampler.py`'s `filter_pool()` and
-  `4.lmt_qc_validator.py`'s `load_database()` filtering logic (with legacy
-  fallback paths if these columns are absent).
-- Video filename convention (`..._t<start_frame>.mp4`) must match what
-  `get_start_frame()` expects, or videos are silently dropped from the
-  frame-resolution map.
-- `DB_FPS = 30` / `FRAME_CONVERSION = 2` constants must match the actual
-  recording/video frame rates; downstream scripts 3 and 4 duplicate these same
-  constants and must be kept in sync manually.
-- Execution order: must run **after** `1.lmt_gap_fill.py` and **before**
-  `3.lmt_qc_sampler.py`. The completion dialog explicitly instructs: "Feed the
-  SQLite into 3.lmt_qc_sampler.py."
+## SQLite output details (unchanged by this update):
 
-**Open Source Notes**
-- **External dependencies**: `opencv-python` (`cv2`), `pandas`, `Pillow`
-  (`PIL.Image`, `PIL.ImageTk`), `tkinter`. Standard library: `os`, `copy`,
-  `sqlite3`, `datetime`, `time`.
-- **Configuration files / environment variables**: none; all thresholds
-  (`MIN_GAP_DURATION_FOR_BINARY_SEARCH = 30s`,
-  `FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES = 1 min`, `DB_FPS`,
-  `FRAME_CONVERSION`) are hardcoded module-level constants, not exposed via
-  the GUI or a config file.
-- **Expected directory structure**: none required beyond a writable output
-  folder (a `_binsearch_tmp` subfolder is created automatically).
-- **Platform assumptions**: requires Tkinter + a working OpenCV video backend;
-  not headless-safe. Video codec support depends on the local OpenCV build.
+**Filename:** lmt_binary_search_<date>.sqlite
+
+**Table:** GAP_FILL_ANALYSIS
+
+**Columns:**
+
+- FRAMENUMBER (int)
+- IN_NEST (int: 1, 0, or -1) — final classification.
+- ASSUMPTION_TYPE (str: "DETECTED" or "ASSUMED").
+- GAP_START_FRAME / GAP_END_FRAME (int or None).
+- BINARY_SEARCH (int: 0/1).
+- FILL_SOURCE (str: "DETECTED", "LOGIC", "BINARY_SEARCH", or "UNKNOWN").
+
+---
+
+# Do NOT Modify
+
+Table name GAP_FILL_ANALYSIS is still reused (overwritten with new columns) — script 3 explicitly checks for a table named GAP_FILL_ANALYSIS first before falling back to a legacy ASSUMED_FRAMES name. Unchanged.
+
+The columns BINARY_SEARCH and FILL_SOURCE (and their specific string values) are unchanged and still depended upon by scripts 3 and 4.
+
+Video filename convention is now t<digits> immediately before the extension (end-anchored) rather than "first t anywhere in the name" — this is a stricter but backward-compatible requirement (any filename that worked reliably before still works; only ambiguous filenames with an early stray "t" now parse correctly instead of incorrectly).
+
+DB_FPS = 30 / FRAME_CONVERSION = 2 constants must still match the actual recording/video frame rates; a mismatch is now flagged as a warning rather than caught silently, but scripts 3 and 4 still duplicate these same constants and must be kept in sync manually (not changed in this pass).
+
+Execution order: must run after 1.lmt_gap_fill.py and before 3.lmt_qc_sampler.py. The completion dialog explicitly instructs: "Feed the SQLite into 3.lmt_qc_sampler.py."
+
+If a "Data Integrity Error" dialog appears during gap classification, no output SQLite or report is produced for that run — this indicates the source GAP_FILL_ANALYSIS data itself is inconsistent and should be regenerated/checked rather than worked around here.
+
+---
+
+# Open Source Notes
+
+## External dependencies
+
+External dependencies: opencv-python (cv2), numpy (newly required by this update for vectorized classification), pandas, Pillow (PIL.Image, PIL.ImageTk), tkinter.
+
+Standard library: os, re (newly used for robust filename parsing), copy, sqlite3, datetime, time.
+
+---
+
+## Configuration files / environment variables
+
+Configuration files / environment variables: none; all thresholds (MIN_GAP_DURATION_FOR_BINARY_SEARCH = 30s, FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES = 1 min, DB_FPS, FRAME_CONVERSION, and the new FPS_TOLERANCE = 0.5) are hardcoded module-level constants, not exposed via the GUI or a config file.
+
+---
+
+## Expected directory structure
+
+Expected directory structure: none required beyond a writable output folder (a _binsearch_tmp subfolder is created automatically, and is now also cleaned up on early window close).
+
+---
+
+## Platform assumptions
+
+Platform assumptions: requires Tkinter + a working OpenCV video backend; not headless-safe. Video codec support depends on the local OpenCV build.
+
+Video files are now kept open (cached) for the duration of the review session rather than being reopened per frame — on platforms/filesystems with a low limit on simultaneously open file handles, reviewing a very large number of distinct video files in one session could approach that limit (previously each file was opened and closed immediately, avoiding this, at the cost of much slower repeated re-opening).
 
 ---
 
