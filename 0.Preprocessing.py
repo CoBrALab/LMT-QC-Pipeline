@@ -11,10 +11,6 @@ Purpose: Creates a copy of an LMT Output SQLite database and removes rows from t
     
 The original SQLite is NOT modified.
 
-Before deleting, the script verifies that the "FRONT_X = -1 implies all other
-position columns are -1" assumption actually holds for this file, and warns
-the user if it does not. It also refuses to silently overwrite an existing
-output file, and verifies the DETECTION table exists before doing any work.
 """
 
 import os
@@ -60,180 +56,92 @@ def process_database(input_db, output_folder):
 
     output_db = os.path.join(output_folder, f"{name}_processed{ext}")
 
-    # Guard against silently overwriting a previous run's output.
-    if os.path.exists(output_db):
-        overwrite = messagebox.askyesno(
-            "Output Already Exists",
-            f"The output file already exists:\n{output_db}\n\n"
-            f"Do you want to overwrite it?"
-        )
-        if not overwrite:
-            print("Aborted: output file already exists and user chose not to overwrite.")
-            return
+    print("=" * 60)
+    print("Copying SQLite...")
+    print("=" * 60)
 
-    conn = None
+    start = time.time()
 
-    try:
-        print("=" * 60)
-        print("Copying SQLite...")
-        print("=" * 60)
+    shutil.copy2(input_db, output_db)
 
-        start = time.time()
+    print(f"Copy complete.")
+    print(f"Saved to:\n{output_db}")
 
-        shutil.copy2(input_db, output_db)
+    copy_time = time.time() - start
 
-        print(f"Copy complete.")
-        print(f"Saved to:\n{output_db}")
+    print(f"Copy time: {copy_time:.1f} seconds\n")
 
-        copy_time = time.time() - start
+    print("=" * 60)
+    print("Opening copied SQLite...")
+    print("=" * 60)
 
-        print(f"Copy time: {copy_time:.1f} seconds\n")
+    conn = sqlite3.connect(output_db)
 
-        print("=" * 60)
-        print("Opening copied SQLite...")
-        print("=" * 60)
+    cur = conn.cursor()
 
-        conn = sqlite3.connect(output_db)
+    print("Counting rows to delete...")
 
-        cur = conn.cursor()
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM DETECTION
+        WHERE
+            FRONT_X = -1 
+    """)
 
-        # Verify the DETECTION table actually exists before querying it.
-        cur.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='DETECTION'"
-        )
-        if cur.fetchone() is None:
-            messagebox.showerror(
-                "Error",
-                f"The selected SQLite does not contain a DETECTION table.\n\n"
-                f"File: {output_db}\n\n"
-                f"This does not look like a valid LMT Output SQLite."
-            )
-            conn.close()
-            conn = None
-            return
+    rows_to_delete = cur.fetchone()[0]
 
-        print("Counting rows to delete...")
+    print(f"Rows matching filter: {rows_to_delete:,}")
 
-        cur.execute("""
-            SELECT COUNT(*)
-            FROM DETECTION
-            WHERE
-                FRONT_X = -1 
-        """)
-
-        rows_to_delete = cur.fetchone()[0]
-
-        print(f"Rows matching filter: {rows_to_delete:,}")
-
-        if rows_to_delete == 0:
-            print("No rows need deleting.")
-            conn.close()
-            conn = None
-            return
-
-        # Validate the documented assumption: whenever FRONT_X = -1, the
-        # other position columns should also be -1. Warn the user (with an
-        # exact mismatch count) if that assumption does not hold for this
-        # file, rather than silently deleting rows that may not actually be
-        # fully invalid.
-        print("\nValidating FRONT_X = -1 assumption against other columns...")
-
-        cur.execute("""
-            SELECT COUNT(*)
-            FROM DETECTION
-            WHERE
-                FRONT_X = -1
-                AND NOT (
-                    FRONT_Y = -1 AND
-                    FRONT_Z = -1 AND
-                    BACK_X  = -1 AND
-                    BACK_Y  = -1 AND
-                    BACK_Z  = -1
-                )
-        """)
-
-        mismatched_rows = cur.fetchone()[0]
-
-        if mismatched_rows > 0:
-            print(f"WARNING: {mismatched_rows:,} row(s) have FRONT_X = -1 but "
-                  f"do NOT have all of FRONT_Y/FRONT_Z/BACK_X/BACK_Y/BACK_Z = -1.")
-
-            proceed = messagebox.askyesno(
-                "Assumption Check Failed",
-                f"{mismatched_rows:,} row(s) have FRONT_X = -1 but do not have "
-                f"FRONT_Y, FRONT_Z, BACK_X, BACK_Y, and BACK_Z all equal to -1 "
-                f"as well.\n\n"
-                f"This script deletes rows based on FRONT_X = -1 only. "
-                f"Proceeding will delete these rows too, even though some of "
-                f"their other position columns are not -1.\n\n"
-                f"Do you want to proceed anyway?"
-            )
-            if not proceed:
-                print("Aborted by user after assumption-check failure.")
-                conn.close()
-                conn = None
-                return
-        else:
-            print("Assumption verified: all FRONT_X = -1 rows also have "
-                  "FRONT_Y/FRONT_Z/BACK_X/BACK_Y/BACK_Z = -1.")
-
-        print("\nDeleting rows...")
-
-        delete_start = time.time()
-
-        cur.execute("""
-            DELETE FROM DETECTION
-            WHERE
-                FRONT_X = -1 
-        """)
-
-        conn.commit()
-
-        delete_time = time.time() - delete_start
-
-        print("Deletion complete.")
-
-        print("\nRunning VACUUM...")
-        print("(This may take several minutes for large databases.)")
-
-        vacuum_start = time.time()
-
-        cur.execute("VACUUM")
-
-        conn.commit()
-
-        vacuum_time = time.time() - vacuum_start
-
+    if rows_to_delete == 0:
+        print("No rows need deleting.")
         conn.close()
-        conn = None
+        return
 
-        total = time.time() - start
+    print("\nDeleting rows...")
 
-        print("\n" + "=" * 60)
-        print("Finished Successfully")
-        print("=" * 60)
+    delete_start = time.time()
 
-        print(f"Rows removed : {rows_to_delete:,}")
-        print(f"Output SQLite: {output_db}")
+    cur.execute("""
+        DELETE FROM DETECTION
+        WHERE
+            FRONT_X = -1 
+    """)
 
-        print(f"\nTiming")
-        print(f"Copy    : {copy_time:.1f} sec")
-        print(f"Delete  : {delete_time:.1f} sec")
-        print(f"VACUUM  : {vacuum_time:.1f} sec")
-        print(f"Total   : {total:.1f} sec")
+    conn.commit()
 
-        print("=" * 60)
+    delete_time = time.time() - delete_start
 
-    except Exception as e:
-        messagebox.showerror("Error", f"Processing failed:\n\n{e}")
-        print(f"ERROR: Processing failed: {e}")
+    print("Deletion complete.")
 
-    finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
+    print("\nRunning VACUUM...")
+    print("(This may take several minutes for large databases.)")
+
+    vacuum_start = time.time()
+
+    cur.execute("VACUUM")
+
+    conn.commit()
+
+    vacuum_time = time.time() - vacuum_start
+
+    conn.close()
+
+    total = time.time() - start
+
+    print("\n" + "=" * 60)
+    print("Finished Successfully")
+    print("=" * 60)
+
+    print(f"Rows removed : {rows_to_delete:,}")
+    print(f"Output SQLite: {output_db}")
+
+    print(f"\nTiming")
+    print(f"Copy    : {copy_time:.1f} sec")
+    print(f"Delete  : {delete_time:.1f} sec")
+    print(f"VACUUM  : {vacuum_time:.1f} sec")
+    print(f"Total   : {total:.1f} sec")
+
+    print("=" * 60)
 
 
 # Main GUI
