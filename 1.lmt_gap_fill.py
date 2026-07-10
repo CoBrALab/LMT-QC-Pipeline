@@ -9,7 +9,7 @@ from tkinter import filedialog, messagebox
 # Main analysis
 def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_ymin, nest_ymax, buffer_xmin, buffer_xmax, buffer_ymin, buffer_ymax):
 
-    # Validate animal_id and use a parameterized query (was an f-string SQL injection risk).
+    # Validate animal_id and use a parameterized query
     try:
         animal_id = int(animal_id)
     except (TypeError, ValueError):
@@ -38,8 +38,6 @@ def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_
     NEST_BUFFER = {"xmin": buffer_xmin, "xmax": buffer_xmax, "ymin": buffer_ymin, "ymax": buffer_ymax}
 
     def in_roi_vec(x, y, roi):
-        # Vectorized equivalent of the original scalar in_roi() helper.
-        # Boundary semantics (strict <) are unchanged from the original.
         return (roi["xmin"] < x) & (x < roi["xmax"]) & (roi["ymin"] < y) & (y < roi["ymax"])
 
     frames_arr = df["FRAMENUMBER"].to_numpy(dtype=np.int64)
@@ -48,10 +46,6 @@ def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_
 
     n = len(frames_arr)
 
-    # DETECTED rows: every detected frame gets exactly one row, identical to
-    # the original code's behavior (each frame is visited as "current" once,
-    # plus the final frame handled separately in the original — mathematically
-    # equivalent to applying in_roi() to every detected frame here).
     detected_in_nest = in_roi_vec(x_arr, y_arr, NEST).astype(int)
 
     detected_rows = n
@@ -67,13 +61,23 @@ def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_
 
         gap = f2 - f1
 
-        # IMPORTANT: COMMENTING OUT THIS PART FOR NOW AS WHEN I RAN THIS CODE IT SAID
-        # IT DETECTED 183 SUCH ROWS FOR THE 20HR CUT FROM THE 48HR, I INFORMED AUDREY-ANNE ABOUT THIS ISSUE
-        # BUT FOR NOW WE ARE GOING TO CONTINUE
-        # # Missing validation: consecutive detected frames for this animal must
-        # # strictly increase. A duplicate or out-of-order FRAMENUMBER would
-        # # previously be silently treated as "no gap" (gap > 1 is False) with
-        # # no indication of a data-quality problem.
+        # NOTE: This validation is temporarily disabled.
+        # During processing of the 24-hour dataset (derived from the 48-hour dataset),
+        # this check flagged 183 cases where FRAMENUMBER values were duplicate or
+        # non-increasing. These appear to be data-quality issues rather than problems
+        # with the gap-detection logic.
+        #
+        # The issue has been communicated to collaborators. Until the source data is
+        # investigated and a decision is made on how these cases should be handled,
+        # processing will continue without raising an exception here.
+        #
+        # Re-enable the following lines of code once the underlying data issue has been resolved.
+        #
+        # Missing validation: consecutive detected frames for this animal must
+        # strictly increase. Duplicate or out-of-order FRAMENUMBER values would
+        # otherwise be silently treated as having "no gap" (gap > 1 is False),
+        # potentially masking data-quality problems.
+        #
         # if np.any(gap <= 0):
         #     bad_idx = np.nonzero(gap <= 0)[0]
         #     examples = [(int(f1[i]), int(f2[i])) for i in bad_idx[:10]]
@@ -98,16 +102,13 @@ def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_
 
             # Build the missing FRAMENUMBER for every gap frame via a small
             # per-gap loop (bounded by number of gaps, not number of missing
-            # frames) plus vectorized repeat/offset — avoids the original
-            # per-missing-frame Python dict-append loop.
+            # frames) plus vectorized repeat/offset
             offsets = np.concatenate([np.arange(s) for s in sizes])
             frame_numbers_assumed = np.repeat(starts, sizes) + offsets
             gap_start_assumed     = np.repeat(f1[gap_idx], sizes)
             gap_end_assumed       = np.repeat(f2[gap_idx], sizes)
 
-            in_nest_value_per_gap = np.where(
-                in_nest_start[gap_idx] & in_buffer_end[gap_idx], 1, -1
-            )
+            in_nest_value_per_gap = np.where(in_nest_start[gap_idx] & in_buffer_end[gap_idx], 1, -1)
             in_nest_assumed = np.repeat(in_nest_value_per_gap, sizes)
         else:
             frame_numbers_assumed = np.array([], dtype=np.int64)
