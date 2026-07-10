@@ -21,7 +21,6 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 
 # GUI
-
 def browse_input():
     filename = filedialog.askopenfilename(title="Select LMT Output SQLite", filetypes=[("SQLite Database", "*.sqlite *.db"), ("All Files", "*.*")])
     if filename:
