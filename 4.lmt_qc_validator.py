@@ -13,7 +13,6 @@ from PIL import Image, ImageTk
 QC_MODE_DETECTED      = "DETECTED"
 QC_MODE_BINARY_SEARCH = "BINARY_SEARCH"
 QC_MODE_LOGIC         = "LOGIC"
-# Backward-compat alias (old 3.lmt_qc_sampler.py outputs wrote "ASSUMED")
 QC_MODE_ASSUMED       = "ASSUMED"
 
 DB_FPS           = 30
@@ -160,9 +159,7 @@ def extract_frame_to_label(video_map, global_frame, label_widget, thumb_size=(42
     instead of a backward-only, frame-by-frame linear scan. This is both
     much faster for frames far from any covering video, and behaviorally
     consistent with the frame substitution the reviewer already saw in
-    2.lmt_binary_search.py for the same gap (previously this backward-only
-    search could pick a different, worse substitute frame than what the
-    reviewer actually judged).
+    2.lmt_binary_search.py for the same gap
 
     Returns True on success, False on failure.
     """
@@ -318,10 +315,7 @@ def save_row(row_index):
 
     conn = sqlite3.connect(output_db)
     try:
-        conn.execute(
-            "UPDATE QC_ASSUMED_SAMPLES SET MANUAL_QC = ? WHERE sample_id = ?",
-            (manual_val, int(row["sample_id"]))
-        )
+        conn.execute("UPDATE QC_ASSUMED_SAMPLES SET MANUAL_QC = ? WHERE sample_id = ?", (manual_val, int(row["sample_id"])))
         conn.commit()
     finally:
         conn.close()
@@ -408,16 +402,13 @@ def show_sample():
         if has_boundaries:
             panels_frame.pack(side=LEFT, padx=10)
             single_frame.pack_forget()
-            extract_frame_to_label(video_map, int(gap_start), img_left,
-                                   thumb_size=(300, 260))
+            extract_frame_to_label(video_map, int(gap_start), img_left, thumb_size=(300, 260))
             lbl_left_title.config(text=f"Before gap  (frame {int(gap_start)})")
 
-            extract_frame_to_label(video_map, int(row["frame_global"]), img_center,
-                                   thumb_size=(300, 260))
+            extract_frame_to_label(video_map, int(row["frame_global"]), img_center, thumb_size=(300, 260))
             lbl_center_title.config(text=f"QC frame  (frame {int(row['frame_global'])})")
 
-            extract_frame_to_label(video_map, int(gap_end), img_right,
-                                   thumb_size=(300, 260))
+            extract_frame_to_label(video_map, int(gap_end), img_right, thumb_size=(300, 260))
             lbl_right_title.config(text=f"After gap  (frame {int(gap_end)})")
         else:
             # No video map or no boundary info — fall back to single panel
@@ -519,11 +510,6 @@ def next_sample():
             return
 
         completed_df = df[df["MANUAL_QC"].notna()].copy()
-        # Keep this consistent with the defensive filtering in
-        # calculate_metrics(): only rows with a valid IN_NEST prediction
-        # (0 or 1) are included, and "predicted OUT" is the explicit == 0
-        # case rather than "!= 1" (which would previously have silently
-        # swept a stray IN_NEST == -1 row into the FN list).
         completed_df = completed_df[completed_df["IN_NEST"].isin([0, 1])]
         fp_files = completed_df[(completed_df["IN_NEST"] == 1) & (completed_df["MANUAL_QC"] == 0)]["screenshot"].tolist()
         fn_files = completed_df[(completed_df["IN_NEST"] == 0) & (completed_df["MANUAL_QC"] == 1)]["screenshot"].tolist()
@@ -613,10 +599,8 @@ def select_database():
 
 def select_videos():
     global video_paths_list
-    video_paths_list = list(filedialog.askopenfilenames(
-        filetypes=[("MP4 Video", "*.mp4")]))
-    vid_label.config(text=f"{len(video_paths_list)} video(s) selected"
-                     if video_paths_list else "No videos selected")
+    video_paths_list = list(filedialog.askopenfilenames(filetypes=[("MP4 Video", "*.mp4")]))
+    vid_label.config(text=f"{len(video_paths_list)} video(s) selected" if video_paths_list else "No videos selected")
 
 def select_folder():
     global screenshot_folder
@@ -717,52 +701,44 @@ root.protocol("WM_DELETE_WINDOW", _on_close)
 top_frame = Frame(root)
 top_frame.pack(pady=10)
 
-Button(top_frame, text="Select lmt_qc_sampler_<qc_mode>_<timestamp>.sqlite",
-       command=select_database).grid(row=0, column=0, padx=10)
+Button(top_frame, text="Select lmt_qc_sampler_<qc_mode>_<timestamp>.sqlite", command=select_database).grid(row=0, column=0, padx=10)
 db_label = Label(top_frame, text="No database selected", wraplength=500)
 db_label.grid(row=0, column=1)
 
-Button(top_frame, text="Select LMT Videos  (for 3-panel view)",
-       command=select_videos).grid(row=1, column=0, padx=10)
-vid_label = Label(top_frame, text="No videos selected  (optional — enables boundary panels)",
-                  wraplength=500)
+Button(top_frame, text="Select LMT Videos  (for 3-panel view)", command=select_videos).grid(row=1, column=0, padx=10)
+vid_label = Label(top_frame, text="No videos selected  (optional — enables boundary panels)", wraplength=500)
 vid_label.grid(row=1, column=1)
 
-Button(top_frame, text="Select Screenshot Folder",
-       command=select_folder).grid(row=2, column=0, padx=10)
+Button(top_frame, text="Select Screenshot Folder", command=select_folder).grid(row=2, column=0, padx=10)
 folder_label = Label(top_frame, text="No folder selected", wraplength=500)
 folder_label.grid(row=2, column=1)
 
-Button(top_frame, text="START QC", command=start_qc,
-       bg="green", fg="white", width=20).grid(row=3, column=0, columnspan=2, pady=10)
+Button(top_frame, text="START QC", command=start_qc, bg="green", fg="white", width=20).grid(row=3, column=0, columnspan=2, pady=10)
 
 # Main area
 main_frame = Frame(root)
 main_frame.pack(fill=BOTH, expand=True)
 
-# ── Three-panel image area (used for ASSUMED modes when videos are loaded) ───
+# Three-panel image area (used for ASSUMED modes when videos are loaded)
 panels_frame = Frame(main_frame, bg="#111")
 # (packed/unpacked dynamically in show_sample)
 
-lbl_left_title  = Label(panels_frame, text="Before gap",  font=("Arial", 8, "bold"),
-                         fg="#aaa", bg="#111")
+lbl_left_title  = Label(panels_frame, text="Before gap",  font=("Arial", 8, "bold"), fg="#aaa", bg="#111")
 lbl_left_title.grid(row=0, column=0, padx=4)
 img_left        = Label(panels_frame, bg="#111")
 img_left.grid(row=1, column=0, padx=4, pady=2)
 
-lbl_center_title = Label(panels_frame, text="QC frame",   font=("Arial", 8, "bold"),
-                          fg="#55ff55", bg="#0d2a0d")
+lbl_center_title = Label(panels_frame, text="QC frame",   font=("Arial", 8, "bold"), fg="#55ff55", bg="#0d2a0d")
 lbl_center_title.grid(row=0, column=1, padx=4)
 img_center      = Label(panels_frame, bg="#0d2a0d", bd=2, relief=GROOVE)
 img_center.grid(row=1, column=1, padx=4, pady=2)
 
-lbl_right_title = Label(panels_frame, text="After gap",   font=("Arial", 8, "bold"),
-                         fg="#aaa", bg="#111")
+lbl_right_title = Label(panels_frame, text="After gap",   font=("Arial", 8, "bold"), fg="#aaa", bg="#111")
 lbl_right_title.grid(row=0, column=2, padx=4)
 img_right       = Label(panels_frame, bg="#111")
 img_right.grid(row=1, column=2, padx=4, pady=2)
 
-# ── Single-panel image area (used for DETECTED mode or when no videos loaded) ─
+# Single-panel image area (used for DETECTED mode or when no videos loaded)
 single_frame = Frame(main_frame)
 # (packed/unpacked dynamically in show_sample)
 
@@ -776,40 +752,36 @@ right_frame.pack(side=RIGHT, padx=40, anchor=N)
 mode_banner = Label(right_frame, text="", font=("Arial", 10, "bold"))
 mode_banner.pack(pady=(4, 0))
 
-sample_text     = Label(right_frame, text="Sample",          font=("Arial", 16, "bold"))
+sample_text     = Label(right_frame, text="Sample", font=("Arial", 16, "bold"))
 sample_text.pack(pady=10)
 
-video_text      = Label(right_frame, text="Video",           font=("Arial", 12))
+video_text      = Label(right_frame, text="Video", font=("Arial", 12))
 video_text.pack(pady=5)
 
-frame_text      = Label(right_frame, text="Frame",           font=("Arial", 12))
+frame_text      = Label(right_frame, text="Frame", font=("Arial", 12))
 frame_text.pack(pady=5)
 
-assumption_text = Label(right_frame, text="Row Type",        font=("Arial", 12))
+assumption_text = Label(right_frame, text="Row Type", font=("Arial", 12))
 assumption_text.pack(pady=5)
 
-gap_text        = Label(right_frame, text="Gap",             font=("Arial", 12))
+gap_text        = Label(right_frame, text="Gap", font=("Arial", 12))
 gap_text.pack(pady=5)
 
-prediction_text = Label(right_frame, text="Algorithm",       font=("Arial", 12, "bold"))
+prediction_text = Label(right_frame, text="Algorithm", font=("Arial", 12, "bold"))
 prediction_text.pack(pady=10)
 
-manual_text     = Label(right_frame, text="Manual QC",       font=("Arial", 12, "bold"))
+manual_text     = Label(right_frame, text="Manual QC", font=("Arial", 12, "bold"))
 manual_text.pack(pady=10)
 
 # Action buttons
-Button(right_frame, text="IN NEST  (A)", bg="green", fg="white", width=22, height=2,
-       command=lambda: set_manual_qc(1)).pack(pady=5)
+Button(right_frame, text="IN NEST  (A)", bg="green", fg="white", width=22, height=2, command=lambda: set_manual_qc(1)).pack(pady=5)
 
-Button(right_frame, text="OUT OF NEST  (D)", bg="red", fg="white", width=22, height=2,
-       command=lambda: set_manual_qc(0)).pack(pady=5)
+Button(right_frame, text="OUT OF NEST  (D)", bg="red", fg="white", width=22, height=2, command=lambda: set_manual_qc(0)).pack(pady=5)
 
 Label(right_frame, text="", font=("Arial", 6)).pack()
 
-Button(right_frame, text="\u25c4  PREVIOUS  (\u2190)", width=22,
-       command=previous_sample).pack(pady=5)
-Button(right_frame, text="NEXT  (\u2192)  \u25ba", width=22,
-       command=next_sample).pack(pady=5)
+Button(right_frame, text="\u25c4  PREVIOUS  (\u2190)", width=22, command=previous_sample).pack(pady=5)
+Button(right_frame, text="NEXT  (\u2192)  \u25ba", width=22, command=next_sample).pack(pady=5)
 
 Label(right_frame,
       text=("\nKeyboard shortcuts:\n"
