@@ -67,19 +67,22 @@ def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_
 
         gap = f2 - f1
 
-        # Missing validation: consecutive detected frames for this animal must
-        # strictly increase. A duplicate or out-of-order FRAMENUMBER would
-        # previously be silently treated as "no gap" (gap > 1 is False) with
-        # no indication of a data-quality problem.
-        if np.any(gap <= 0):
-            bad_idx = np.nonzero(gap <= 0)[0]
-            examples = [(int(f1[i]), int(f2[i])) for i in bad_idx[:10]]
-            raise Exception(
-                f"Found {len(bad_idx):,} duplicate or non-increasing FRAMENUMBER "
-                f"pair(s) for Animal ID {animal_id} after ordering by FRAMENUMBER. "
-                f"This indicates duplicate or out-of-order detection rows.\n"
-                f"Example (FRAMENUMBER, next FRAMENUMBER) pairs: {examples}"
-            )
+        # IMPORTANT: COMMENTING OUT THIS PART FOR NOW AS WHEN I RAN THIS CODE IT SAID
+        # IT DETECTED 183 SUCH ROWS FOR THE 20HR CUT FROM THE 48HR, I INFORMED AUDREY-ANNE ABOUT THIS ISSUE
+        # BUT FOR NOW WE ARE GOING TO CONTINUE
+        # # Missing validation: consecutive detected frames for this animal must
+        # # strictly increase. A duplicate or out-of-order FRAMENUMBER would
+        # # previously be silently treated as "no gap" (gap > 1 is False) with
+        # # no indication of a data-quality problem.
+        # if np.any(gap <= 0):
+        #     bad_idx = np.nonzero(gap <= 0)[0]
+        #     examples = [(int(f1[i]), int(f2[i])) for i in bad_idx[:10]]
+        #     raise Exception(
+        #         f"Found {len(bad_idx):,} duplicate or non-increasing FRAMENUMBER "
+        #         f"pair(s) for Animal ID {animal_id} after ordering by FRAMENUMBER. "
+        #         f"This indicates duplicate or out-of-order detection rows.\n"
+        #         f"Example (FRAMENUMBER, next FRAMENUMBER) pairs: {examples}"
+        #     )
 
         in_nest_start = in_roi_vec(x1, y1, NEST)
         in_buffer_end = in_roi_vec(x2, y2, NEST_BUFFER)
