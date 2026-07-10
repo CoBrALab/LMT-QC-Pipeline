@@ -83,9 +83,6 @@ def build_video_map(video_paths):
     video_map.sort(key=lambda x: x["start"])
     return video_map, skipped_videos, fps_mismatches
 
-# Cached, reusable VideoCapture handles (perf: avoids reopening the same
-# video file for every single frame extraction while sampling). Released at
-# the end of each "RUN SAMPLING" click, after all selected pools finish.
 _video_capture_cache = {}
 
 def _get_capture(path):
@@ -174,13 +171,13 @@ def filter_pool(df_full, qc_mode):
                     (no IN_NEST restriction; detector always produces 0 or 1)
 
     BINARY_SEARCH : ASSUMPTION_TYPE == "ASSUMED"
-                    AND FILL_SOURCE == "BINARY_SEARCH"  (new column from 2.lmt_binary_search.py)
+                    AND FILL_SOURCE == "BINARY_SEARCH"  
                     AND IN_NEST in (0, 1)                (exclude residual -1)
                     Falls back to BINARY_SEARCH == 1 if FILL_SOURCE column is absent
                     (backward compat with old 2.lmt_binary_search.py outputs).
 
     LOGIC         : ASSUMPTION_TYPE == "ASSUMED"
-                    AND FILL_SOURCE == "LOGIC"           (new column from 2.lmt_binary_search.py)
+                    AND FILL_SOURCE == "LOGIC"           
                     AND IN_NEST in (0, 1)
                     Falls back to BINARY_SEARCH == 0 and IN_NEST in (0,1) if absent.
     """
@@ -197,9 +194,6 @@ def filter_pool(df_full, qc_mode):
             # Backward compat: use legacy BINARY_SEARCH flag column
             mask = ((df_full["ASSUMPTION_TYPE"] == "ASSUMED") & (df_full["BINARY_SEARCH"] == 1) & (df_full["IN_NEST"].isin([0, 1])))
         else:
-            # Neither column present (e.g. this file came directly from
-            # 1.lmt_gap_fill.py without going through 2.lmt_binary_search.py).
-            # Previously this raised a bare, confusing KeyError.
             raise Exception(
                 "This SQLite has neither a FILL_SOURCE nor a BINARY_SEARCH "
                 "column, so the 'BINARY_SEARCH' pool cannot be sampled. "
@@ -276,8 +270,7 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
     # A fresh random seed is generated and used for this draw (so the run is
     # still effectively random each time, matching prior behavior), but the
     # seed is recorded and reported below so this exact sample can be
-    # reproduced later if needed (previously there was no way to reproduce
-    # a given sample set at all).
+    # reproduced later if needed 
     sample_seed = random.randint(0, 2**31 - 1)
     df_sample = df.sample(n=n_samples, random_state=sample_seed).sort_values("FRAMENUMBER").reset_index(drop=True)
 
@@ -285,7 +278,6 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
     if not video_map:
         raise Exception("No valid LMT videos found.")
 
-    # Surface video parsing/frame-rate problems that were previously silent.
     video_warnings = []
     if skipped_videos:
         video_warnings.append(
@@ -311,19 +303,12 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
     for _, row in df_sample.iterrows():
         requested_frame = int(row["FRAMENUMBER"])
 
-        # Resolve requested_frame to the nearest frame that actually exists in
-        # a video (exact match if available, otherwise the closer of the
-        # immediately preceding/succeeding detected frame; preceding wins
-        # ties). This also tells us which video that frame came from, so a
-        # single call replaces the old separate backward-only video-name walk.
         screenshot_name = f"S{counter:04d}_A{animal_id}_TMP.png"
         screenshot_path = os.path.join(screenshot_folder, screenshot_name)
         resolved_frame, video_name = extract_frame(video_map, requested_frame, screenshot_path)
         if resolved_frame is None:
             continue
 
-        # Rename using the resolved frame/video now that we know them, so the
-        # filename always reflects the frame actually captured in the image.
         final_screenshot_name = (
             f"S{counter:04d}_A{animal_id}_G{resolved_frame}_{video_name}.png")
         final_screenshot_path = os.path.join(screenshot_folder, final_screenshot_name)
