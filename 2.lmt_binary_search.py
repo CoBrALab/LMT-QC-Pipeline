@@ -113,14 +113,6 @@ def build_video_map(video_paths):
     video_map.sort(key=lambda x: x["start"])
     return video_map, skipped_videos, fps_mismatches
 
-# Cached, reusable VideoCapture handles.
-# Previously, every single frame extraction opened a brand-new
-# cv2.VideoCapture on the relevant video file and released it immediately
-# after reading one frame. During interactive binary-search review (three
-# panel images per task, potentially hundreds of tasks) this reopened the
-# same video files repeatedly - a significant, avoidable performance cost.
-# Handles are released via _release_all_captures() at the end of a run or
-# when the window is closed early.
 _video_capture_cache = {}
 
 def _get_capture(path):
@@ -193,11 +185,6 @@ def _read_frame_from_video(video_entry, resolved_frame, out_path):
     return False
 
 def extract_frame_to_path(video_map, global_frame, out_path):
-    # Resolve to the nearest available frame (preceding vs. succeeding,
-    # whichever is closer; preceding wins ties) rather than assuming any
-    # particular video. Never falls back to the first video arbitrarily.
-    # Returns the resolved global frame number on success (which may differ
-    # from global_frame if it had to be substituted), or None on failure.
     for resolved_frame, video_entry in find_nearest_frame_candidates(video_map, global_frame):
         if _read_frame_from_video(video_entry, resolved_frame, out_path):
             return resolved_frame
@@ -860,9 +847,6 @@ class BinarySearchGUI:
         if not self.video_map:
             messagebox.showerror("Error", "Could not parse any valid videos."); return
 
-        # Surface video parsing/frame-rate problems that were previously
-        # silent (videos could be silently dropped from the map, and no
-        # frame-rate assumption was ever checked against the actual files).
         video_warnings = []
         if skipped_videos:
             video_warnings.append(
@@ -1193,11 +1177,6 @@ class BinarySearchGUI:
         neg_frames        = set(self.df_neg["FRAMENUMBER"].tolist())
         searchable_frames = neg_frames - self.skipped_frames
 
-        # Build final classification for ASSUMED frames.
-        # (Vectorized with NumPy instead of the original per-row iterrows()
-        # loops - which were run twice over the full ASSUMED-frame table -
-        # a real performance bottleneck on large datasets. final_clf and
-        # df_out end up with identical contents to the original code.)
         df_out = self.df.copy()
 
         fn_arr       = df_out["FRAMENUMBER"].to_numpy(dtype=np.int64)
