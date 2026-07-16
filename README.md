@@ -12,7 +12,7 @@ Scripts: `0.Preprocessing.py`, `1.lmt_gap_fill.py`,
 ---
 ## Script: `0.Preprocessing.py`
 
-**Core Logic**
+### Overview
 
 This script creates a cleaned copy of a raw LMT Output SQLite database **without modifying the original file**. It removes invalid rows from the `DETECTION` table where:
 
@@ -46,18 +46,18 @@ Additional safety features include:
 - Prevents accidental overwriting of an existing output file by requesting confirmation.
 - Wraps all database operations in exception handling to ensure the SQLite connection is always closed.
 
-**Inputs**
+### Inputs
 - LMT Output SQLite (table: `DETECTION`, columns: `FRONT_X` (Determines which rows are deleted), `FRONT_Y` (Used only for assumption validation), `FRONT_Z` (Used only for assumption validation), `BACK_X` (Used only for assumption validation), `BACK_Y` (Used only for assumption validation), `BACK_Z` (Used only for assumption validation))
 - Output folder path
 
-**Outputs**
+### Outputs
 - `{original_name}_processed.sqlite` (Cleaned copy of the input database with invalid `DETECTION` rows removed and disk space reclaimed. If the output file already exists, the user is prompted before overwriting it.)
 
 ---
 
-# Script: `1.lmt_gap_fill.py`
+## Script: `1.lmt_gap_fill.py`
 
-## Overview
+### Overview
 
 This script processes detection data for a **single animal (`ANIMALID`)** and fills gaps between consecutive detections using rule-based logic.
 
@@ -75,126 +75,28 @@ For assumed frames:
 - Otherwise:
   - `IN_NEST = -1` (uncertain), allowing **Script 2 (`2.lmt_binary_search.py`)** to resolve the gap using binary search.
 
-Results are written to a new timestamped SQLite database.
+Results are written to a new SQLite database.
 
----
+### Inputs
+- `{original_name}_processed.sqlite` (table: `DETECTION`, columns: `FRAMENUMBER`, `MASS_X`, `MASS_Y`, `ANIMALID`)
+- Animal ID (integer)
+- Nest ROI: xmin, xmax, ymin, ymax (float)
+- Buffer ROI: xmin, xmax, ymin, ymax (float) (must be larger than the nest ROI)
+- Output folder path
 
-## Recent Updates
-
-- Gap-fill computation is now **vectorized using NumPy**, replacing the previous per-frame Python loop.
-  - Output rows, values, and ordering are **unchanged**.
-- `ANIMALID` is now supplied as a **bound SQL parameter** instead of string interpolation.
-- Validation now ensures:
-  - `ANIMALID` is an integer.
-  - Detected frames are strictly increasing.
-  - Duplicate or out-of-order frame numbers raise a clear error before processing.
-
----
-
-# Inputs
-
-## SQLite Database
-
-User-selected database (typically the output from **Script 0**).
-
-### Source Table
-
-| Table | Purpose |
-|--------|---------|
-| `DETECTION` | Detection positions for the selected animal |
-
-### Columns Used
-
-| Column | Purpose |
-|---------|---------|
-| `FRAMENUMBER` | Frame index |
-| `MASS_X` | X coordinate of animal centroid |
-| `MASS_Y` | Y coordinate of animal centroid |
-| `ANIMALID` | Animal filter |
-
-No other columns are referenced.
-
----
-
-## Input Validation
-
-The script validates that:
-
-- `ANIMALID` is an integer.
-- After sorting by `FRAMENUMBER`, frame numbers are **strictly increasing**.
-- Duplicate or out-of-order detected frames cause the script to terminate with an informative error identifying the offending frame pairs.
-
----
-
-# Outputs
-
-## SQLite Database
-
-**Filename**
-
-```text
-lmt_gap_fill_<YYYY-MM-DD_HH-MM-SS>.sqlite
-```
-
-### Output Table
-
-```text
-GAP_FILL_ANALYSIS
-```
-
-### Output Columns
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `FRAMENUMBER` | Integer | Frame index |
-| `IN_NEST` | Integer | `1` = in nest, `0` = out of nest (detected rows), `-1` = uncertain |
-| `ASSUMPTION_TYPE` | Text | `"DETECTED"` or `"ASSUMED"` |
-| `GAP_START_FRAME` | Integer / NULL | Last detected frame before a gap (`NULL` for detected rows) |
-| `GAP_END_FRAME` | Integer / NULL | First detected frame after a gap (`NULL` for detected rows) |
-
-### `IN_NEST` Values
-
-#### DETECTED rows
-
-| Value | Meaning |
-|-------|---------|
-| `1` | In nest |
-| `0` | Out of nest |
-
-#### ASSUMED rows
-
-| Value | Meaning |
-|-------|---------|
-| `1` | Logic-filled as in nest |
-| `-1` | Uncertain; to be resolved by Script 2 |
+### Outputs
+- `lmt_gap_fill_<YYYY-MM-DD_HH-MM-SS>.sqlite`
+  - Table `GAP_FILL_ANALYSIS`
+    - Columns
+      - `FRAMENUMBER`
+      - `IN_NEST` (1 = in nest, 0 = out of nest (detected rows), -1 = uncertain)
+      - `ASSUMPTION_TYPE` ("DETECTED"/"ASSUMED")
+      - `GAP_START_FRAME` (Last detected frame before a gap (NULL for detected rows))
+      - `GAP_END_FRAME` (First detected frame after a gap (NULL for detected rows))
 
 > **Note:** Assumed rows never receive `IN_NEST = 0`.
 
----
-
-# Do Not Modify
-
-The following behavior is relied upon by downstream scripts.
-
-## Required Table
-
-```text
-GAP_FILL_ANALYSIS
-```
-
-## Required Columns
-
-- `FRAMENUMBER`
-- `IN_NEST`
-- `ASSUMPTION_TYPE`
-- `GAP_START_FRAME`
-- `GAP_END_FRAME`
-
-Scripts **2**, **3**, and **4** assume these names remain unchanged.
-
----
-
-## Assumed Frame Convention
+### Assumed Frame Convention
 
 `ASSUMED` rows must only contain:
 
@@ -209,9 +111,7 @@ Script 2 relies on this convention when selecting:
 df_neg = df[df["IN_NEST"] == -1]
 ```
 
----
-
-## Gap Boundary Meaning
+### Gap Boundary Meaning
 
 The following definitions must remain unchanged:
 
@@ -220,94 +120,10 @@ The following definitions must remain unchanged:
 
 Script 2 depends on these definitions for gap grouping and classification.
 
----
-
-## Known Cross-Script Behavior
-
-There is one intentional discrepancy between Scripts 1 and 2.
-
-### Script 1 logic-fill rule
-
-Uses:
-
-- strict nest ROI at the gap start
-- larger nest buffer ROI at the gap end
-
-### Script 2 gap classification
-
-Uses:
-
-- strict nest ROI at **both** boundary frames
-
-As a result, Script 2 may occasionally encounter an `IN_NEST = -1` frame within what it classifies as a "type 11" gap.
-
-Script 2 already contains explicit handling for this edge case.
-
-Changing this behavior would alter which frames are:
-
-- logic-filled
-- sent to binary search
-
-and therefore must be coordinated across both scripts rather than modified here.
-
----
-
-# Execution Order
-
-Run scripts in the following order:
-
-```text
-Script 0
-    ↓
-1.lmt_gap_fill.py
-    ↓
-2.lmt_binary_search.py
-```
-
----
-
-# Open Source Notes
-
-## External Dependencies
-
-- pandas
-- numpy *(required for vectorized gap filling)*
-- tkinter
-
-### Standard Library
-
-- os
-- sqlite3
-- datetime
-
----
-
-## Configuration
-
-No configuration files or environment variables are required.
-
-All runtime parameters are entered through the GUI, including:
-
-- Animal ID
-- Nest ROI
-- Nest buffer ROI
-
-The GUI provides default values.
-
----
-
-## Directory Requirements
-
-None.
-
-The user simply selects an existing writable output directory.
-
----
-
-## Platform Requirements
-
-- Requires **Tkinter GUI** support.
-- Not designed for headless execution.
+### Do Not Modify
+- ROI test uses strict inequality (`<`, not `<=`) — changing to `<=` alters boundary behaviour
+- `IN_NEST = −1` must remain −1; downstream scripts (`2.lmt_binary_search.py`, `4.lmt_qc_validator.py`) filter on this exact value
+- Table name `GAP_FILL_ANALYSIS` is hardcoded in 2.lmt_binary_search.py's read query
 
 ---
 
