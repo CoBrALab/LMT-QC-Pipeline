@@ -84,7 +84,13 @@ For assumed frames:
 Results are written to a new SQLite database.
 
 ### Inputs
-- `{original_name}_processed.sqlite` (table: `DETECTION`, columns: `FRAMENUMBER`, `MASS_X`, `MASS_Y`, `ANIMALID`)
+- `{original_name}_processed.sqlite`
+  - Table `DETECTION`
+    - Columns
+      - `FRAMENUMBER`
+      - `MASS_X`
+      - `MASS_Y`
+      - `ANIMALID`
 - Animal ID (integer)
 - Nest ROI: xmin, xmax, ymin, ymax (float)
 - Buffer ROI: xmin, xmax, ymin, ymax (float) (must be larger than the nest ROI)
