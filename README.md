@@ -79,7 +79,7 @@ For assumed frames:
   - the animal is inside the nest ROI at the start of the gap **and**
   - remains inside the larger nest buffer ROI at the end of the gap.
 - Otherwise:
-  - `IN_NEST = -1` (uncertain), allowing **Script 2 (`2.lmt_binary_search.py`)** to resolve the gap using binary search.
+  - `IN_NEST = -1` (uncertain), allowing **`2.lmt_binary_search.py` (`2.lmt_binary_search.py`)** to resolve the gap using binary search.
 
 Results are written to a new SQLite database.
 
@@ -114,7 +114,7 @@ Results are written to a new SQLite database.
 
 They must **never** contain `0`.
 
-Script 2 relies on this convention when selecting:
+`2.lmt_binary_search.py` relies on this convention when selecting:
 
 ```python
 df_neg = df[df["IN_NEST"] == -1]
@@ -126,7 +126,7 @@ The following definitions must remain unchanged:
 - `GAP_START_FRAME` = last detected frame before the gap
 - `GAP_END_FRAME` = first detected frame after the gap
 
-Script 2 depends on these definitions for gap grouping and classification.
+`2.lmt_binary_search.py` depends on these definitions for gap grouping and classification.
 
 ### Do Not Modify
 - ROI test uses strict inequality (`<`, not `<=`), changing to `<=` alters boundary behaviour
@@ -389,14 +389,14 @@ flowchart TD
 
 **Data flow between scripts**
 
-- Script 0 → Script 1: cleaned `DETECTION` table (copy of raw LMT SQLite,
+- `0.Preprocessing.py` → `1.lmt_gap_fill.py`: cleaned `DETECTION` table (copy of raw LMT SQLite,
   minus invalid rows).
-- Script 1 → Script 2: `GAP_FILL_ANALYSIS` table (`FRAMENUMBER`, `IN_NEST`,
+- `1.lmt_gap_fill.py` → `2.lmt_binary_search.py`: `GAP_FILL_ANALYSIS` table (`FRAMENUMBER`, `IN_NEST`,
   `ASSUMPTION_TYPE`, `GAP_START_FRAME`, `GAP_END_FRAME`); consumed alongside
   the raw LMT video files.
-- Script 2 → Script 3: updated `GAP_FILL_ANALYSIS` table (same columns +
+- `2.lmt_binary_search.py` → `3.lmt_qc_sampler.py`: updated `GAP_FILL_ANALYSIS` table (same columns +
   `BINARY_SEARCH`, `FILL_SOURCE`); consumed alongside the same LMT video files.
-- Script 3 → Script 4: `QC_ASSUMED_SAMPLES` table + a `Screenshots/` folder of
+- `3.lmt_qc_sampler.py` → `4.lmt_qc_validator.py`: `QC_ASSUMED_SAMPLES` table + a `Screenshots/` folder of
   PNGs; video files are optional input to script 4 (only needed for the
   three-panel boundary view).
 
