@@ -6,8 +6,14 @@ where the tracker lost detection, resolves ambiguous gaps via a human-in-the-loo
 binary-search video review, and then draws QC samples to measure the pipeline's
 accuracy against human judgment.
 
-Scripts: `0.Preprocessing.py`, `1.lmt_gap_fill.py`,
-`2.lmt_binary_search.py`, `3.lmt_qc_sampler.py`, `4.lmt_qc_validator.py`.
+---
+## Execution order
+
+1. `0.Preprocessing.py`: clean raw LMT SQLite (remove invalid detections).
+2. `1.lmt_gap_fill.py`: classify detected frames + logic-fill/flag gaps per animal.
+3. `2.lmt_binary_search.py`: human-in-the-loop resolution of ambiguous gaps via video.
+4. `3.lmt_qc_sampler.py`: draw random QC samples per pool + extract screenshots.
+5. `4.lmt_qc_validator.py`: manual labeling of QC samples + accuracy metrics.
 
 ---
 ## Script: `0.Preprocessing.py`
@@ -290,37 +296,4 @@ Loads a `3.lmt_qc_sampler.py` output, determines the active QC mode from the `QC
 - Uses the OS temp directory (`tempfile.gettempdir()`) for scratch boundary-frame images
 - Not headless-safe.
 
----
 
-## Workflow Summary
-
-### Execution order
-
-1. `0.Preprocessing.py`: clean raw LMT SQLite (remove invalid detections).
-2. `1.lmt_gap_fill.py`: classify detected frames + logic-fill/flag gaps per animal.
-3. `2.lmt_binary_search.py`: human-in-the-loop resolution of ambiguous gaps via video.
-4. `3.lmt_qc_sampler.py`: draw random QC samples per pool + extract screenshots.
-5. `4.lmt_qc_validator.py`: manual labeling of QC samples + accuracy metrics.
-
-**Workflow diagram**
-
-```mermaid
-flowchart TD
-    A["Raw LMT Output SQLite<br/>(DETECTION table)"] --> B["0.Preprocessing.py<br/>remove FRONT_X = -1 rows, VACUUM"]
-    B --> C["{name}_processed.sqlite"]
-    C --> D["1.lmt_gap_fill.py<br/>per-animal gap detection + nest ROI logic"]
-    D --> E["lmt_gap_fill_&lt;timestamp&gt;.sqlite<br/>(GAP_FILL_ANALYSIS)"]
-    V1["LMT video files (*.mp4)"] --> F
-    E --> F["2.lmt_binary_search.py<br/>interactive binary-search review of<br/>IN_NEST = -1 gaps"]
-    F --> G["lmt_binary_search_&lt;date&gt;.sqlite<br/>(GAP_FILL_ANALYSIS + BINARY_SEARCH/FILL_SOURCE)"]
-    F --> G2["LMT_Summary_&lt;date&gt;.txt"]
-    V2["LMT video files (*.mp4)"] --> H
-    G --> H["3.lmt_qc_sampler.py<br/>random sampling per pool<br/>(DETECTED / BINARY_SEARCH / LOGIC)"]
-    H --> I["lmt_qc_sampler_&lt;qc_mode&gt;_&lt;date&gt;.sqlite<br/>(QC_ASSUMED_SAMPLES)"]
-    H --> I2["Screenshots/*.png"]
-    V3["LMT video files (*.mp4, optional)"] --> J
-    I --> J["4.lmt_qc_validator.py<br/>manual IN/OUT labeling"]
-    I2 --> J
-    J --> K["lmt_qc_validator_&lt;date&gt;.sqlite<br/>(QC_ASSUMED_SAMPLES + MANUAL_QC)"]
-    J --> L["lmt_qc_validator_&lt;date&gt;.txt<br/>confusion matrix + accuracy metrics"]
-```
