@@ -65,7 +65,7 @@ Additional safety features include:
 ## Script: `1.lmt_gap_fill.py`
 
 ### Overview
-This script processes detection data for a **single animal (`ANIMALID`)** and fills gaps between consecutive detections using rule-based logic.
+This script processes detection data for a single animal (`ANIMALID`) and fills gaps between consecutive detections using rule-based logic.
 
 For every pair of consecutive detected frames:
 
@@ -75,11 +75,11 @@ For every pair of consecutive detected frames:
 
 For assumed frames:
 
-- `IN_NEST = 1` (logic-filled) **only if**
+- `IN_NEST = 1` (logic-filled) only if
   - the animal is inside the nest ROI at the start of the gap **and**
   - remains inside the larger nest buffer ROI at the end of the gap.
 - Otherwise:
-  - `IN_NEST = -1` (uncertain), allowing **`2.lmt_binary_search.py` (`2.lmt_binary_search.py`)** to resolve the gap using binary search.
+  - `IN_NEST = -1` (uncertain), allowing `2.lmt_binary_search.py` to resolve the gap using binary search.
 
 Results are written to a new SQLite database.
 
