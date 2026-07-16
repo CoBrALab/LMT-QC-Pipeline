@@ -7,7 +7,7 @@ binary-search video review, and then draws QC samples to measure the pipeline's
 accuracy against human judgment.
 
 The pipeline exists because the raw LMT detector is not always able to see the
-animal — occlusion, huddling, nesting material, and camera geometry all produce
+animal. Huddling, nesting material, and running wheel all produce
 stretches of missing detections. Simply ignoring those gaps would silently
 underestimate time spent in the nest; naively assuming "last known state"
 across a long gap would overestimate it in the other direction. Each script in
@@ -42,8 +42,8 @@ working with genuinely observed positions, so this cleanup has to happen
 first, once, rather than being re-implemented as a filter in every other
 script.
 
-The script creates a cleaned **copy** of a raw LMT Output SQLite database —
-it never modifies the original file — and removes rows from the `DETECTION`
+The script creates a cleaned **copy** of a raw LMT Output SQLite database,
+it never modifies the original file, and removes rows from the `DETECTION`
 table where:
 
 ```sql
@@ -58,7 +58,7 @@ deleted rows (SQLite does not shrink a database file automatically after a
 
 | Input | Type | Purpose |
 |---|---|---|
-| LMT Output SQLite (user-selected) | SQLite database, table `DETECTION` | Raw LMT tracking output to be cleaned. |
+| LMT Output SQLite | SQLite database, table `DETECTION` | Raw LMT tracking output to be cleaned. |
 | Output folder | Directory | Where the cleaned copy is written. |
 
 `DETECTION` columns referenced:
@@ -83,7 +83,7 @@ inspected by this script.
    in the output folder, ask the user to confirm before overwriting it,
    rather than silently replacing a previous run's output.
 3. **Copy the file** with `shutil.copy2`, a single filesystem-level copy,
-   rather than reading and rewriting rows in Python — this is both far
+   rather than reading and rewriting rows in Python. This is both far
    faster and guarantees every table/column the script doesn't know about
    is preserved byte-for-byte.
 4. **Verify the `DETECTION` table exists** in the copy before running any
@@ -91,14 +91,14 @@ inspected by this script.
    instead of a raw SQLite exception.
 5. **Count candidate rows** (`FRONT_X = -1`) so the run can report how many
    rows will be affected, and exit early (no-op) if there are none.
-6. **Validate the invalidity assumption** — check whether every row with
+6. **Validate the invalidity assumption** by checking whether every row with
    `FRONT_X = -1` also has `FRONT_Y`, `FRONT_Z`, `BACK_X`, `BACK_Y`, and
    `BACK_Z` all equal to `-1`. If any row violates this, the mismatch count
    is reported and the user is asked whether to proceed anyway; the
    deletion filter itself always remains `FRONT_X = -1`, since that is the
    convention every downstream script expects.
 7. **Delete in bulk** with a single `DELETE ... WHERE FRONT_X = -1`
-   statement — a set-based SQL operation rather than a per-row Python loop,
+   statement, a set-based SQL operation rather than a per-row Python loop,
    which matters when a session has hundreds of thousands of frames.
 8. **`VACUUM`** to physically reclaim the freed space.
 9. **Report a timing summary** (copy / delete / vacuum durations) so a user
@@ -111,7 +111,7 @@ inspected by this script.
   operates on derived files, so a mistake anywhere downstream never requires
   re-exporting from LMT.
 - **`FRONT_X = -1` is the invalidity sentinel**, not a `NULL` or a separate
-  status column — this mirrors how the LMT detector itself flags an
+  status column, this mirrors how the LMT detector itself flags an
   undetected frame. The assumption-validation step exists specifically
   because this sentinel convention is a property of the *data*, not
   something this script can guarantee from the schema alone.
@@ -120,10 +120,10 @@ inspected by this script.
   a failure produces a readable error dialog instead of a console traceback.
 
 ### Do NOT Modify
-- The deletion filter must remain `FRONT_X = -1` — every downstream script
+- The deletion filter must remain `FRONT_X = -1`. Every downstream script
   assumes preprocessing has already been applied using this exact rule.
 - The output naming convention `{original_name}_processed.sqlite` is a soft
-  convention (no downstream script hardcodes it — they all use file-picker
+  convention (no downstream script hardcodes it, they all use file-picker
   dialogs), but changing it will surprise users who rely on it to identify
   cleaned files.
 - The original input database must never be modified in place.
