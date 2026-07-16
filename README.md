@@ -159,9 +159,9 @@ only has to look at the frames that genuinely need it.
 applies a fixed, two-part geometric rule to each gap's two boundary frames
 and immediately commits to one of two outcomes: confidently fill the gap, or
 mark it uncertain. The algorithm that actually resolves an uncertain gap by
-interactively narrowing down where the animal crossed a boundary — including
+interactively narrowing down where the animal crossed a boundary (including
 how it distinguishes an entry from an exit and how it converges on an exact
-transition frame — is implemented entirely in `2.lmt_binary_search.py`; see
+transition frame) is implemented entirely in `2.lmt_binary_search.py`; see
 that script's **Processing Steps** section below for the full explanation.
 
 ### Inputs
@@ -197,19 +197,15 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
 1. **Load one animal's detections**, ordered by `FRAMENUMBER`, using a
    parameterized query (`WHERE ANIMALID = ?`) rather than string
    interpolation.
-2. **Validate frame ordering** — consecutive detected frames for this animal
-   must have strictly increasing `FRAMENUMBER` values; a duplicate or
-   out-of-order pair indicates a data problem and stops the run with a
-   specific, actionable error rather than silently treating it as "no gap."
-3. **Classify every detected frame** directly, using the nest ROI: a
+2. **Classify every detected frame** directly, using the nest ROI: a
    detected frame's `IN_NEST` value is simply whether its `(MASS_X, MASS_Y)`
    position falls strictly inside the nest bounding box. This is the ground
    truth the rest of the pipeline is built on.
-4. **Walk every consecutive pair of detected frames** and compute the frame
+3. **Walk every consecutive pair of detected frames** and compute the frame
    distance between them. A distance of `1` means no gap. A distance greater
-   than `1` means one or more frames went undetected in between — a *gap* —
+   than `1` means one or more frames went undetected in between a *gap*
    and every missing `FRAMENUMBER` in that range becomes an `ASSUMED` row.
-5. **Decide each gap's fate using only its two endpoints** (this is the
+4. **Decide each gap's fate using only its two endpoints** (this is the
    core heuristic, and the reason a human is not required for most gaps):
    - Test whether the animal was inside the **nest ROI** at the last frame
      *before* the gap.
@@ -218,14 +214,14 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
    - If **both** are true, every frame in the gap is filled with
      `IN_NEST = 1`. The reasoning: the animal was already home when
      tracking was lost, and was still within a generous margin of home the
-     moment tracking resumed — the most plausible explanation is that it
+     moment tracking resumed. The most plausible explanation is that it
      simply held still in or near the nest while briefly occluded (e.g. by
      nesting material), rather than having left and returned undetected.
-   - If **either** test fails, the gap is left as `IN_NEST = -1` — the
+   - If **either** test fails, the gap is left as `IN_NEST = -1`. The
      script deliberately does not guess in this case, because it has no
      visual information about what happened during the gap and a wrong
      guess here would silently corrupt the in-nest time estimate.
-6. **Reassemble the full timeline** by combining the detected rows and the
+5. **Reassemble the full timeline** by combining the detected rows and the
    generated assumed rows and sorting by `FRAMENUMBER`, then write the
    result to a new, timestamped SQLite file.
 
@@ -235,24 +231,15 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
   be within the wider buffer (rather than the strict nest box) tolerates
   ordinary positional noise right at the edge of tracking loss, while still
   requiring the *entry* point (start of the gap) to be strictly within the
-  nest — the two ends of a gap are not treated symmetrically because they
+  nest. The two ends of a gap are not treated symmetrically because they
   represent different questions ("was it definitely home when we lost it?"
   vs. "was it still plausibly nearby when we found it again?").
 - **The algorithm only ever looks at gap endpoints, never intermediate
-  positions** (there are none — that's what makes it a gap). This makes the
+  positions** (there are none, that's what makes it a gap). This makes the
   rule fast and fully vectorizable, but it also means it is fundamentally
   unable to detect an entry-and-exit (or exit-and-entry) that both happen
   inside the same gap; such cases are exactly what get pushed downstream as
   `-1`.
-- **Known cross-script edge case**: this script's logic-fill condition
-  (nest ROI at gap start **and** buffer ROI at gap end) can occasionally
-  disagree with `2.lmt_binary_search.py`'s later boundary-type
-  classification, which looks only at the strict nest ROI state of the two
-  boundary frames. A gap can have both boundary frames strictly inside the
-  nest (script 2's "type 11") and still be left `-1` by this script if the
-  buffer condition at the gap's end frame fails. Script 2 explicitly detects
-  and reports this situation rather than silently mis-filing it — see its
-  **Key Design Decisions & Assumptions** section.
 - **`ASSUMED` rows are only ever `1` or `-1`, never `0`.** This convention
   is load-bearing: `2.lmt_binary_search.py` selects its work queue with
   `df[df["IN_NEST"] == -1]`, and would silently skip frames if this script
@@ -262,7 +249,7 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
 - ROI membership tests use strict inequality (`<`, not `<=`); changing this
   changes which frames are considered "at the boundary" and shifts results
   in a way no downstream script expects.
-- `IN_NEST = -1` must remain the exact sentinel for "uncertain" — both
+- `IN_NEST = -1` must remain the exact sentinel for "uncertain", both
   `2.lmt_binary_search.py` and `4.lmt_qc_validator.py` filter on this exact
   value.
 - Table name `GAP_FILL_ANALYSIS` and all five output columns
