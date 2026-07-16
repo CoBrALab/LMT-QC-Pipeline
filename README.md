@@ -46,11 +46,19 @@ Additional safety features include:
 - Wraps all database operations in exception handling to ensure the SQLite connection is always closed.
 
 ### Inputs
-- LMT Output SQLite (table: `DETECTION`, columns: `FRONT_X` (Determines which rows are deleted), `FRONT_Y` (Used only for assumption validation), `FRONT_Z` (Used only for assumption validation), `BACK_X` (Used only for assumption validation), `BACK_Y` (Used only for assumption validation), `BACK_Z` (Used only for assumption validation))
+- LMT Output SQLite
+  - Table `DETECTION`
+    - Columns
+      - `FRONT_X` (Determines which rows are deleted)
+      - `FRONT_Y` (Used only for assumption validation)
+      - `FRONT_Z` (Used only for assumption validation)
+      - `BACK_X` (Used only for assumption validation)
+      - `BACK_Y` (Used only for assumption validation)
+      - `BACK_Z` (Used only for assumption validation))
 - Output folder path
 
 ### Outputs
-- `{original_name}_processed.sqlite` (Cleaned copy of the input database with invalid `DETECTION` rows removed and disk space reclaimed. If the output file already exists, the user is prompted before overwriting it.)
+- `{original_name}_processed.sqlite` 
 
 ---
 
