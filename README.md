@@ -143,9 +143,9 @@ Loads a `1.lmt_gap_fill.py` output and isolates all ASSUMED frames still marked 
       - `BINARY_SEARCH` (0 (Binary search was not performed) / 1 (Binary search was performed))
       - `FILL_SOURCE` ("DETECTED" / "LOGIC" / "BINARY_SEARCH" / "UNKNOWN")
 - `LMT_Summary_<YYYY-MM-DD>.txt`
-- `_binsearch_tmp/ (Temp image cache; Scratch PNGs extracted from video during interactive review; Deleted at successful completion (or) if the window is closed early)
+- `_binsearch_tmp/` (Temp image cache; Scratch PNGs extracted from video during interactive review; Deleted at successful completion (or) if the window is closed early)
 
-# Do NOT Modify
+### Do NOT Modify
 - `DB_FPS = 30` and `FRAME_CONVERSION = 2`: these encode the relationship between the LMT database frame rate (30 fps) and the video frame rate (15 fps), wrong values would extract the wrong frames
 - Video filename parsing in `get_start_frame()` assumes the pattern `...t<int>.<ext>`, any other naming convention will break video-to-frame mapping
 - `BINARY_SEARCH = 1` is set only for frames in searchable gaps (above threshold), this distinction is used by 4.lmt_qc_validator.py
