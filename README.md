@@ -142,7 +142,7 @@ Loads a `1.lmt_gap_fill.py` output and isolates all ASSUMED frames still marked 
 
 ### Inputs
 - `lmt_gap_fill_<date>.sqlite` (If a gap's GAP_START_FRAME/GAP_END_FRAME does not correspond to a detected FRAMENUMBER, or a detected frame's IN_NEST value is anything other than 0/1, gap classification raises a clear "Data Integrity Error" dialog)
-- LMT output video files (.mp4)
+- LMT output video files (.mp4) (Same naming convention and frame-rate assumptions as `1.lmt_gap_fill.py`)
 - Output folder path
 
 ### Outputs
@@ -184,185 +184,123 @@ Video files are now kept open (cached) for the duration of the review session ra
 
 ---
 
-### Script: `3.lmt_qc_sampler.py`
+## Script: `3.lmt_qc_sampler.py`
 
-**Core Logic**
-Loads a `2.lmt_binary_search.py` output (or a legacy equivalent), splits rows
-into three QC "pools" — `DETECTED`, `BINARY_SEARCH`, or `LOGIC` — based on how
-each frame's classification was produced, draws a random sample of a
-user-specified size from each selected pool, extracts the corresponding video
-frame as a screenshot, and records everything in a new SQLite table for manual
-review in script 4.
+### Overview
+Loads a `2.lmt_binary_search.py` output (or a legacy equivalent), splits rows into three QC "pools" — `DETECTED`, `BINARY_SEARCH`, or `LOGIC` — based on how each frame's classification was produced, draws a random sample of a user-specified size from each selected pool, extracts the corresponding video frame as a screenshot, and records everything in a new SQLite table for manual review in `4.lmt_qc_validator.py`.
 
-**Inputs**
+### Inputs
+- `lmt_binary_search_<date>.sqlite`
+- LMT output video files (.mp4) (Same naming convention and frame-rate assumptions as `2.lmt_binary_search.py`)
+- Output folder path
+- Animal ID (integer)
+- Sample count (integer, applied independently to each selected QC type)
+- QC type selections: `DETECTED rows`, `BINARY_SEARCH rows`, `LOGIC rows'
 
-| File | Type | Purpose |
-|---|---|---|
-| `lmt_binary_search_<date>.sqlite` (script 2 output) | SQLite database | Fully classified per-frame data to draw QC samples from. |
-| One or more LMT video files (`*.mp4`) | Video | Source of the screenshot images captured for each sampled frame. |
+### Outputs
+- Per selected type:
+    - `lmt_qc_sampler_<qc_mode>_<YYYY-MM-DD>.sqlite`
+        - Table `QC_ASSUMED_SAMPLES`
+            - Columns
+              - `sample_id` 
+              - `animal_id` 
+              - `video`
+              - `frame_global` (the actual (possibly nearest-neighbor-resolved) global frame number captured)
+              - `requested_frame` (the originally sampled `FRAMENUMBER` before any nearest-frame resolution)
+              - `IN_NEST` (1 = in nest, 0 = out of nest, -1 = 00 gaps, shorter than configurable duration threshold)
+              - `ASSUMPTION_TYPE` ("DETECTED" / "ASSUMED")
+              - `FILL_SOURCE` ("DETECTED" / "LOGIC" / "BINARY_SEARCH" / "UNKNOWN")
+              - `GAP_START_FRAME` (Last detected frame before a gap (NULL for detected rows))
+              - `GAP_END_FRAME` 
+              - `screenshot` (filename of the extracted PNG (relative to the `Screenshots/` folder))
+              - `QC_MODE` ("DETECTED" / "BINARY_SEARCH" / "LOGIC")
+      - `Screenshots/`   
 
-SQLite input details:
-- **Filename**: user-selected (expected to be a `2.lmt_binary_search.py`
-  output; falls back to legacy naming if needed).
-- **Table**: `GAP_FILL_ANALYSIS` (preferred) or legacy `ASSUMED_FRAMES` (used
-  if `GAP_FILL_ANALYSIS` is not found in the file).
-- **Columns used**: `FRAMENUMBER`, `IN_NEST`, `ASSUMPTION_TYPE`,
-  `FILL_SOURCE` (optional/new), `BINARY_SEARCH` (optional/legacy),
-  `GAP_START_FRAME`, `GAP_END_FRAME`.
+### Do NOT Modify
+- Table name `QC_ASSUMED_SAMPLES` and all listed column names are required by `4.lmt_qc_validator.py`'s `load_database()`.
+- The screenshot filename format (`S{counter:04d}_A{animal_id}_G{resolved_frame}_{video_name}.png`) must remain resolvable relative to the `Screenshots/` subfolder for `4.lmt_qc_validator.py` to locate images (`os.path.join(screenshot_folder, screenshot_nm)`), where `screenshot_folder` is the folder the user points `4.lmt_qc_validator.py` at.
 
-Video input details: same naming convention and frame-rate assumptions as
-script 2 (`DB_FPS = 30`, `FRAME_CONVERSION = 2`).
+### Open Source Notes
 
-Additional (non-file) GUI inputs: `Animal ID`, number of samples per pool, and
-which of the three pools (`DETECTED`/`BINARY_SEARCH`/`LOGIC`) to sample.
+#### External dependencies
+- `opencv-python` (`cv2`), `pandas`, `tkinter`
+- Standard library: `os`, `sqlite3`, `datetime`
 
-**Outputs**
+#### Configuration files / environment variables
+- None
+- `DB_FPS`, `FRAME_CONVERSION`, and the three `QC_MODE_*` constants are hardcoded and duplicated from `2.lmt_binary_search.py`.
 
-| File | Type | Purpose |
-|---|---|---|
-| `lmt_qc_sampler_<qc_mode>_<YYYY-MM-DD>.sqlite` (one per selected pool) | SQLite database | Metadata for the drawn QC sample, consumed by script 4. |
-| `Screenshots/S####_A<animal_id>_G<frame>_<video>.png` | PNG image | Extracted video frame for each sampled row. |
+#### Expected directory structure
+- Creates `{output_folder}/{qc_mode}_{timestamp}/Screenshots/` automatically.
 
-Output folder structure: `output_folder/{qc_mode}_{timestamp}/` containing the
-SQLite file directly, and a `Screenshots/` subfolder with the PNGs.
-
-SQLite output details:
-- **Filename**: `lmt_qc_sampler_<qc_mode>_<date>.sqlite`
-- **Table**: `QC_ASSUMED_SAMPLES`
-- **Columns**:
-  - `sample_id` (int) — 1-based counter, also embedded in the screenshot
-    filename.
-  - `animal_id` (int) — animal ID entered by the user.
-  - `video` (str) — basename of the video file the screenshot was extracted
-    from.
-  - `frame_global` (int) — the actual (possibly nearest-neighbor-resolved)
-    global frame number captured.
-  - `requested_frame` (int) — the originally sampled `FRAMENUMBER` before any
-    nearest-frame resolution.
-  - `IN_NEST` (int: `1`/`0`/`-1`) — classification carried over from the
-    source row.
-  - `ASSUMPTION_TYPE` (str) — `"DETECTED"` or `"ASSUMED"`, carried over.
-  - `FILL_SOURCE` (str) — carried over if present in source, else defaults to
-    the requested `qc_mode`.
-  - `GAP_START_FRAME` / `GAP_END_FRAME` (int or `None`) — carried over; only
-    populated for `ASSUMED` rows.
-  - `screenshot` (str) — filename of the extracted PNG (relative to the
-    `Screenshots/` folder).
-  - `QC_MODE` (str: `"DETECTED"`/`"BINARY_SEARCH"`/`"LOGIC"`) — which pool this
-    sample belongs to; read by script 4 to determine filtering/display logic.
-
-**Do NOT Modify**
-- Table name `QC_ASSUMED_SAMPLES` and all listed column names are required by
-  `4.lmt_qc_validator.py`'s `load_database()`.
-- The `QC_MODE` value written to every row must be one of the three literal
-  strings `DETECTED`/`BINARY_SEARCH`/`LOGIC` — script 4 reads the value from
-  the *first row only* (`df_full["QC_MODE"].iloc[0]`) to decide the filtering
-  mode for the entire file, so a mixed-mode file is not supported.
-- The screenshot filename format
-  (`S{counter:04d}_A{animal_id}_G{resolved_frame}_{video_name}.png`) must
-  remain resolvable relative to the `Screenshots/` subfolder for script 4 to
-  locate images (`os.path.join(screenshot_folder, screenshot_nm)`), where
-  `screenshot_folder` is the folder the user points script 4 at.
-- Execution order: must run **after** `2.lmt_binary_search.py` and **before**
-  `4.lmt_qc_validator.py`.
-
-**Open Source Notes**
-- **External dependencies**: `opencv-python` (`cv2`), `pandas`, `tkinter`.
-  Standard library: `os`, `sqlite3`, `datetime`.
-- **Configuration files / environment variables**: none; `DB_FPS`,
-  `FRAME_CONVERSION`, and the three `QC_MODE_*` constants are hardcoded and
-  duplicated from script 2.
-- **Expected directory structure**: creates
-  `{output_folder}/{qc_mode}_{timestamp}/Screenshots/` automatically.
-- **Platform assumptions**: requires Tkinter + OpenCV; not headless-safe.
+#### Platform assumptions
+- Requires Tkinter + OpenCV; not headless-safe.
 
 ---
 
-### Script: `4.lmt_qc_validator.py`
+## Script: `4.lmt_qc_validator.py`
 
-**Core Logic**
-Loads a `3.lmt_qc_sampler.py` output, determines the active QC mode from the
-`QC_MODE` column (with legacy fallbacks), filters to the eligible rows for that
-mode, and presents each sampled screenshot (plus, for `ASSUMED`-type modes, the
-gap's before/after boundary frames re-extracted from video) to a human reviewer
-for manual "IN NEST"/"OUT OF NEST" labeling. Saves progress after every label,
-and on completion computes a two-class confusion matrix (algorithm prediction
-= `IN_NEST` vs. human ground truth = `MANUAL_QC`) and writes a text validation
-report.
+### Overview 
+Loads a `3.lmt_qc_sampler.py` output, determines the active QC mode from the `QC_MODE` column (with legacy fallbacks), filters to the eligible rows for that mode, and presents each sampled screenshot (plus, for `ASSUMED`-type modes, the gap's before/after boundary frames re-extracted from video) to a human reviewer for manual "IN NEST"/"OUT OF NEST" labeling. Saves progress after every label, and on completion computes a two-class confusion matrix (algorithm prediction = `IN_NEST` vs. human ground truth = `MANUAL_QC`) and writes a text validation report.
 
-**Inputs**
+### Inputs
+- `lmt_qc_sampler_<qc_mode>_<YYYY-MM-DD>.sqlite`
+- `Screenshots/`
+- LMT output video files (.mp4) (Same naming convention and frame-rate assumptions as `3.lmt_qc_validator.py`)
 
-| File | Type | Purpose |
-|---|---|---|
-| `lmt_qc_sampler_<qc_mode>_<timestamp>.sqlite` (script 3 output) | SQLite database | The drawn QC sample to be manually labeled. |
-| Screenshot folder | Directory of PNGs | Location of the images referenced by the `screenshot` column. |
-| LMT video files (`*.mp4`, optional) | Video | If provided, enables re-extracting the gap's before/after boundary frames for a three-panel review display. |
+### Outputs
+- `lmt_qc_validator_<YYYY-MM-DD>.sqlite`
+    - Table `QC_ASSUMED_SAMPLES`
+        - Columns
+          - `sample_id` 
+          - `animal_id` 
+          - `video`
+          - `frame_global` (the actual (possibly nearest-neighbor-resolved) global frame number captured)
+          - `requested_frame` (the originally sampled `FRAMENUMBER` before any nearest-frame resolution)
+          - `IN_NEST` (1 = in nest, 0 = out of nest, -1 = 00 gaps, shorter than configurable duration threshold)
+          - `ASSUMPTION_TYPE` ("DETECTED" / "ASSUMED")
+          - `FILL_SOURCE` ("DETECTED" / "LOGIC" / "BINARY_SEARCH" / "UNKNOWN")
+          - `GAP_START_FRAME` (Last detected frame before a gap (NULL for detected rows))
+          - `GAP_END_FRAME` 
+          - `screenshot` (filename of the extracted PNG (relative to the `Screenshots/` folder))
+          - `QC_MODE` ("DETECTED" / "BINARY_SEARCH" / "LOGIC")
+          - `MANUAL_QC` (1 = human says IN NEST, 0 = human says OUT OF NEST, null/NaN = not yet labeled)
+- `lmt_qc_validator_<YYYY-MM-DD>.txt` 
 
-SQLite input details:
-- **Filename**: user-selected (expected to be a `3.lmt_qc_sampler.py` output).
-- **Table**: `QC_ASSUMED_SAMPLES`
-- **Columns used**: `screenshot`, `video`, `frame_global`, `IN_NEST`,
-  `ASSUMPTION_TYPE`, `FILL_SOURCE` (optional), `BINARY_SEARCH` (optional,
-  legacy), `GAP_START_FRAME`, `GAP_END_FRAME`, `QC_MODE` (optional — absence
-  implies the legacy `"ASSUMED"` mode), `MANUAL_QC` (added by this script if
-  absent).
+### Do NOT Modify
+- This is the terminal script in the pipeline; nothing downstream consumes its output within this repository, but its report format (TP/FP/TN/FN, accuracy, error rate, sensitivity, specificity) is the pipeline's accuracy measurement and should be treated as the canonical QC metric definition.
+- Relies on the `QC_MODE` value from the **first row** of the loaded table to choose the filter/display logic for the entire session — files must not mix QC modes.
+- Relies on the `screenshot` column values being resolvable as `os.path.join(screenshot_folder, screenshot_nm)` — the user must point this script at the same folder script 3 wrote screenshots into (the `Screenshots/` subfolder), not the arent pool folder.
+- Boundary/three-panel display for `ASSUMED`-type modes requires `GAP_START_FRAME`/`GAP_END_FRAME` to be present and non-null, and requires videos to be loaded; otherwise it silently falls back to single-panel display of the pre-extracted screenshot.
 
-**Outputs**
+### Open Source Notes
 
-| File | Type | Purpose |
-|---|---|---|
-| `lmt_qc_validator_<YYYY-MM-DD>.sqlite` (written into the screenshot folder) | SQLite database | The same sample table with human labels (`MANUAL_QC`) recorded; saved after every label for durability. |
-| `lmt_qc_validator_<YYYY-MM-DD>.txt` (written into the screenshot folder) | Text report | Confusion matrix and accuracy/error-rate/sensitivity/specificity metrics, plus lists of false-positive/false-negative screenshot filenames. |
+#### External dependencies
+- `opencv-python` (`cv2`), `pandas`, `Pillow` (`PIL.Image`, `PIL.ImageTk`), `tkinter`. Standard library: `os`, `sqlite3`, `datetime`, `tempfile`, `uuid`.
 
-SQLite output details:
-- **Filename**: `lmt_qc_validator_<date>.sqlite`
-- **Table**: `QC_ASSUMED_SAMPLES`
-- **Columns**: identical to the script 3 output table, plus:
-  - `MANUAL_QC` (nullable int: `1` = human says IN NEST, `0` = human says OUT
-    OF NEST, `null`/`NaN` = not yet labeled).
+#### Configuration files / environment variables**
+- None
+- `DB_FPS`, `FRAME_CONVERSION`, and QC mode constants are hardcoded and duplicated from `2.lmt_binary_search.py`/`3.lmt_qc_sampler.py`.
 
-**Do NOT Modify**
-- This is the terminal script in the pipeline; nothing downstream consumes its
-  output within this repository, but its report format (TP/FP/TN/FN, accuracy,
-  error rate, sensitivity, specificity) is the pipeline's accuracy measurement
-  and should be treated as the canonical QC metric definition.
-- Relies on the `QC_MODE` value from the **first row** of the loaded table to
-  choose the filter/display logic for the entire session — files must not mix
-  QC modes.
-- Relies on the `screenshot` column values being resolvable as
-  `os.path.join(screenshot_folder, screenshot_nm)` — the user must point this
-  script at the same folder script 3 wrote screenshots into (the `Screenshots/`
-  subfolder), not the parent pool folder.
-- Boundary/three-panel display for `ASSUMED`-type modes requires
-  `GAP_START_FRAME`/`GAP_END_FRAME` to be present and non-null, and requires
-  videos to be loaded; otherwise it silently falls back to single-panel display
-  of the pre-extracted screenshot.
-
-**Open Source Notes**
-- **External dependencies**: `opencv-python` (`cv2`), `pandas`, `Pillow`
-  (`PIL.Image`, `PIL.ImageTk`), `tkinter`. Standard library: `os`, `sqlite3`,
-  `datetime`, `tempfile`, `uuid`.
-- **Configuration files / environment variables**: none; `DB_FPS`,
-  `FRAME_CONVERSION`, and QC mode constants are hardcoded and duplicated from
-  scripts 2/3.
-- **Expected directory structure**: expects the screenshot folder produced by
-  script 3 (i.e., the `Screenshots/` subfolder, or wherever the `screenshot`
-  filenames are resolvable relative to).
-- **Platform assumptions**: requires Tkinter + OpenCV; uses the OS temp
-  directory (`tempfile.gettempdir()`) for scratch boundary-frame images; not
-  headless-safe.
+#### Expected directory structure
+- Expects the screenshot folder produced by `3.lmt_qc_sampler.py` (i.e., the `Screenshots/` subfolder, or wherever the `screenshot`filenames are resolvable relative to).
+  
+#### Platform assumptions
+- requires Tkinter + OpenCV
+- Uses the OS temp directory (`tempfile.gettempdir()`) for scratch boundary-frame images
+- Not headless-safe.
 
 ---
 
-## 3. Workflow Summary
+## Workflow Summary
 
-**Execution order**
+### Execution order
 
-1. `0.Preprocessing.py` — clean raw LMT SQLite (remove invalid detections).
-2. `1.lmt_gap_fill.py` — classify detected frames + logic-fill/flag gaps per animal.
-3. `2.lmt_binary_search.py` — human-in-the-loop resolution of ambiguous gaps via video.
-4. `3.lmt_qc_sampler.py` — draw random QC samples per pool + extract screenshots.
-5. `4.lmt_qc_validator.py` — manual labeling of QC samples + accuracy metrics.
+1. `0.Preprocessing.py`: clean raw LMT SQLite (remove invalid detections).
+2. `1.lmt_gap_fill.py`: classify detected frames + logic-fill/flag gaps per animal.
+3. `2.lmt_binary_search.py`: human-in-the-loop resolution of ambiguous gaps via video.
+4. `3.lmt_qc_sampler.py`: draw random QC samples per pool + extract screenshots.
+5. `4.lmt_qc_validator.py`: manual labeling of QC samples + accuracy metrics.
 
 **Workflow diagram**
 
@@ -386,31 +324,3 @@ flowchart TD
     J --> K["lmt_qc_validator_&lt;date&gt;.sqlite<br/>(QC_ASSUMED_SAMPLES + MANUAL_QC)"]
     J --> L["lmt_qc_validator_&lt;date&gt;.txt<br/>confusion matrix + accuracy metrics"]
 ```
-
-**Data flow between scripts**
-
-- `0.Preprocessing.py` → `1.lmt_gap_fill.py`: cleaned `DETECTION` table (copy of raw LMT SQLite,
-  minus invalid rows).
-- `1.lmt_gap_fill.py` → `2.lmt_binary_search.py`: `GAP_FILL_ANALYSIS` table (`FRAMENUMBER`, `IN_NEST`,
-  `ASSUMPTION_TYPE`, `GAP_START_FRAME`, `GAP_END_FRAME`); consumed alongside
-  the raw LMT video files.
-- `2.lmt_binary_search.py` → `3.lmt_qc_sampler.py`: updated `GAP_FILL_ANALYSIS` table (same columns +
-  `BINARY_SEARCH`, `FILL_SOURCE`); consumed alongside the same LMT video files.
-- `3.lmt_qc_sampler.py` → `4.lmt_qc_validator.py`: `QC_ASSUMED_SAMPLES` table + a `Screenshots/` folder of
-  PNGs; video files are optional input to script 4 (only needed for the
-  three-panel boundary view).
-
-**Intermediate files/databases produced**
-- `{name}_processed.sqlite` (script 0)
-- `lmt_gap_fill_<timestamp>.sqlite` (script 1)
-- `lmt_binary_search_<date>.sqlite` + `LMT_Summary_<date>.txt` + transient
-  `_binsearch_tmp/` cache (script 2)
-- `lmt_qc_sampler_<qc_mode>_<date>.sqlite` + `Screenshots/*.png` (script 3, one
-  set per selected pool)
-
-**Final outputs**
-- `lmt_qc_validator_<date>.sqlite` — QC sample table with human labels
-  (`MANUAL_QC`).
-- `lmt_qc_validator_<date>.txt` — final accuracy report (confusion matrix,
-  accuracy, error rate, sensitivity, specificity) plus lists of false-positive
-  and false-negative screenshots for review.
