@@ -6,7 +6,6 @@ where the tracker lost detection, resolves ambiguous gaps via a human-in-the-loo
 binary-search video review, and then draws QC samples to measure the pipeline's
 accuracy against human judgment.
 
----
 ## Execution order
 
 1. `0.Preprocessing.py`: clean raw LMT SQLite (remove invalid detections).
