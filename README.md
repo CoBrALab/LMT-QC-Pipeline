@@ -116,13 +116,6 @@ inspected by this script.
   connection is always closed, even if a step fails partway through, and so
   a failure produces a readable error dialog instead of a console traceback.
 
-### Do NOT Modify
-- The output naming convention `{original_name}_processed.sqlite` is a soft
-  convention (no downstream script hardcodes it, they all use file-picker
-  dialogs), but changing it will surprise users who rely on it to identify
-  cleaned files.
-- The original input database must never be modified in place.
-
 ### Open Source Notes
 - **External dependencies**: `tkinter` (GUI; may require the `python3-tk`
   system package on some Linux distributions). No third-party pip packages.
