@@ -334,7 +334,7 @@ detected frame immediately before the gap and the detected frame
 immediately after it, every gap is labeled with one of four types:
 
 - **`00`** (out → out): no directional information is available from the
-  endpoints alone — the animal could have stayed out the whole time, or
+  endpoints alone, the animal could have stayed out the whole time, or
   briefly entered and left again, and there is no way to tell from the
   boundary states. These gaps are **skipped** (left `-1`) rather than
   guessed.
@@ -344,19 +344,19 @@ immediately after it, every gap is labeled with one of four types:
   logged anomaly (see script 1's documented edge case) and skipped rather
   than silently miscounted.
 - **`01`** (out → in) and **`10`** (in → out): these are the gaps that
-  matter — the animal's state is known to differ between the two
+  matter, the animal's state is known to differ between the two
   endpoints, so **exactly one transition occurred somewhere inside the
   gap**. These are the only gap types eligible for binary search.
 
 **3. Filter by duration.** Among `01`/`10` gaps, any shorter than
 `MIN_GAP_DURATION_FOR_BINARY_SEARCH` (default 30 seconds) are left `-1`
-rather than queued for review — a gap this short contributes little to the
+rather than queued for review, a gap this short contributes little to the
 overall time-in-nest estimate relative to the reviewer time it would cost
 to resolve precisely.
 
 **4. Binary search the remaining gaps.** This is the core algorithm, and it
 relies on one key assumption: **within a `01` or `10` gap, the animal's
-in-nest state is monotonic** — it changes exactly once, at some unknown
+in-nest state is monotonic**, it changes exactly once, at some unknown
 frame, from the state at the gap's start to the (different) state at the
 gap's end. This turns "find the transition frame" into the same problem as
 searching a sorted array for the boundary between two runs of different
@@ -368,8 +368,8 @@ frame by frame.
 
 Concretely, for a segment `[seg_start, seg_end]` still being searched, the
 reviewer is shown the frame at the midpoint and asked whether the animal is
-currently in the nest. What that answer implies — and which half of the
-segment gets filled immediately versus searched further — depends on which
+currently in the nest. What that answer implies and which half of the
+segment gets filled immediately versus searched further depends on which
 direction the gap runs:
 
 - **`10` gap (in → out of nest).** The segment starts *known in-nest* and
@@ -391,8 +391,8 @@ direction the gap runs:
   room remains to search further, everything up through the midpoint is
   filled `0`.
 
-In both directions the reviewer is answering the same underlying question —
-"has the transition occurred by this frame?" — but which half is resolved
+In both directions the reviewer is answering the same underlying question,
+"has the transition occurred by this frame?," but which half is resolved
 immediately and which half continues to be searched is flipped, because
 which endpoint state is "known" differs between an entry and an exit.
 
@@ -401,13 +401,13 @@ terminates in one of two ways:
 
 - The segment being searched shrinks to zero width (`seg_start > seg_end`),
   at which point the two already-filled halves fully account for every
-  frame originally in the gap — every subtask either fills a contiguous
+  frame originally in the gap, every subtask either fills a contiguous
   block outright or hands off exactly the untouched remainder to a new
   subtask, so no frame is ever double-counted or dropped.
 - As a practical shortcut, once a candidate segment's *duration* drops
   below `FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES` (default 1
   minute), the entire remaining segment is filled from a single answer
-  instead of continuing to subdivide down to individual frames — sub-minute
+  instead of continuing to subdivide down to individual frames. Sub-minute
   precision on exactly which frame a transition occurred is not meaningful
   for this pipeline's purposes, so this trades a small amount of possible
   imprecision for a large reduction in reviewer clicks.
@@ -422,7 +422,7 @@ operations rather than a per-row loop) into the authoritative final
 **7. Write outputs and report.** The final table is written to a new
 SQLite file, and a detailed summary report is generated with multiple
 internal balance checks (e.g. that every accounted-for frame category sums
-back to the original total) — if any check fails, an `IntegrityError` is
+back to the original total), if any check fails, an `IntegrityError` is
 raised rather than silently emitting a report with unexplained
 inconsistencies.
 
@@ -430,7 +430,7 @@ inconsistencies.
 - **Binary search is appropriate here specifically because `01`/`10` gaps
   are guaranteed (by construction) to contain exactly one transition.**
   This monotonicity assumption is what makes "ask about the midpoint, then
-  recurse on one half" valid — it would not be valid for `00` gaps (no
+  recurse on one half" valid, it would not be valid for `00` gaps (no
   known transition at all) or gaps that could contain multiple transitions,
   which is exactly why those cases are filtered out *before* the search
   begins rather than handled by it.
@@ -438,7 +438,7 @@ inconsistencies.
   When a requested global frame doesn't map exactly onto any loaded video's
   coverage, the script resolves to the nearer of the closest preceding or
   succeeding available frame (preceding wins exact ties) rather than
-  arbitrarily using the first video or failing outright. This same
+   failing outright. This same
   resolution strategy is reused in scripts 3 and 4 so that a QC reviewer
   later sees the same substitute frame the original binary-search reviewer
   saw for the same gap.
@@ -447,7 +447,7 @@ inconsistencies.
   from the same handful of video files.
 - **Integrity checks are deliberately strict.** The summary report
   recomputes several frame-count totals through independent paths and
-  raises rather than continues if they disagree — the report's numbers are
+  raises rather than continues if they disagree. The report's numbers are
   used as the pipeline's audit trail, so an inconsistency there should stop
   the run rather than be written down as if it were trustworthy.
 
@@ -460,7 +460,7 @@ inconsistencies.
   breaks video-to-frame mapping.
 - `BINARY_SEARCH = 1` must be set only for frames in gaps that were
   actually routed to the reviewer (i.e. `01`/`10` gaps above the duration
-  threshold) — `4.lmt_qc_validator.py` relies on this distinction.
+  threshold), `4.lmt_qc_validator.py` relies on this distinction.
 - Table name `GAP_FILL_ANALYSIS` and the `BINARY_SEARCH`/`FILL_SOURCE`
   columns are read by name in `3.lmt_qc_sampler.py` and
   `4.lmt_qc_validator.py`.
@@ -489,16 +489,16 @@ inconsistencies.
 
 ### Overview
 This script exists to make the pipeline's output auditable. Scripts 1 and 2
-each make decisions — one by static geometric rule, one by human binary
-search — and both could still be systematically wrong in ways that are hard
+each make decisions (one by static geometric rule, one by human binary
+search) and both could still be systematically wrong in ways that are hard
 to notice by inspection alone. Rather than trusting either process blindly,
 this script draws independently-sized random samples from each category of
 decision (raw detections, logic-filled gaps, binary-search-filled gaps) so
 that `4.lmt_qc_validator.py` can measure each one's real-world accuracy
 separately.
 
-Loads a `2.lmt_binary_search.py` output (or a legacy equivalent), splits
-rows into three QC "pools" — `DETECTED`, `BINARY_SEARCH`, or `LOGIC` — based
+Loads a `2.lmt_binary_search.py` output, splits
+rows into three QC "pools" (`DETECTED`, `BINARY_SEARCH`, or `LOGIC`) based
 on how each frame's classification was produced, draws a random sample of a
 user-specified size from each selected pool, extracts the corresponding
 video frame as a screenshot, and records everything in a new SQLite table
