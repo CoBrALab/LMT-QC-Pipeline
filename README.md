@@ -183,8 +183,7 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
 
 ### Processing Steps
 1. **Load one animal's detections**, ordered by `FRAMENUMBER`, using a
-   parameterized query (`WHERE ANIMALID = ?`) rather than string
-   interpolation.
+   parameterized query (`WHERE ANIMALID = ?`).
 2. **Classify every detected frame** directly, using the nest ROI: a
    detected frame's `IN_NEST` value is simply whether its `(MASS_X, MASS_Y)`
    position falls strictly inside the nest bounding box. This is the ground
@@ -219,9 +218,7 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
   be within the wider buffer (rather than the strict nest box) tolerates
   ordinary positional noise right at the edge of tracking loss, while still
   requiring the *entry* point (start of the gap) to be strictly within the
-  nest. The two ends of a gap are not treated symmetrically because they
-  represent different questions ("was it definitely home when we lost it?"
-  vs. "was it still plausibly nearby when we found it again?").
+  nest. 
 - **The algorithm only ever looks at gap endpoints, never intermediate
   positions** (there are none, that's what makes it a gap). This makes the
   rule fast and fully vectorizable, but it also means it is fundamentally
@@ -421,12 +418,11 @@ inconsistencies.
 
 ### Key Design Decisions & Assumptions
 - **Binary search is appropriate here specifically because `01`/`10` gaps
-  are guaranteed (by construction) to contain exactly one transition.**
+  are assumed to contain exactly one transition.**
   This monotonicity assumption is what makes "ask about the midpoint, then
   recurse on one half" valid, it would not be valid for `00` gaps (no
-  known transition at all) or gaps that could contain multiple transitions,
-  which is exactly why those cases are filtered out *before* the search
-  begins rather than handled by it.
+  known transition at all) which is exactly why those cases are filtered
+  out *before* the search begins rather than handled by it. 
 - **Nearest-frame video resolution, not backward-only or exact-only.**
   When a requested global frame doesn't map exactly onto any loaded video's
   coverage, the script resolves to the nearer of the closest preceding or
@@ -536,11 +532,11 @@ Per selected pool, written to `output_folder/{qc_mode}_{timestamp}/`:
 ### Processing Steps
 1. **Configure the run** via the GUI: source database, videos, output
    folder, animal ID, sample size, and which pools to draw from.
-2. **Guard existing output** — if a pool's output folder for today's date
+2. **Guard existing output.** If a pool's output folder for today's date
    already contains files (e.g. from an earlier run), ask for confirmation
    before continuing rather than silently overwriting.
-3. **Detect the source schema** — whether the file has the modern
-   `FILL_SOURCE` column, a legacy `BINARY_SEARCH` flag, or neither — and
+3. **Detect the source schema.** Whether the file has the modern
+   `FILL_SOURCE` column, a legacy `BINARY_SEARCH` flag, or neither, and
    load `GAP_FILL_ANALYSIS` (or the legacy `ASSUMED_FRAMES` table)
    accordingly.
 4. **Filter to the requested pool.** `DETECTED` selects LMT-observed rows
@@ -552,7 +548,7 @@ Per selected pool, written to `output_folder/{qc_mode}_{timestamp}/`:
    than a raw `KeyError`.
 5. **Draw a random sample**, bounded to the pool's actual size, using an
    explicit, freshly-generated random seed that is reported back to the
-   user — the draw is still effectively random every run, but the exact
+   user, the draw is still effectively random every run, but the exact
    sample can be reproduced later if the seed is recorded.
 6. **Resolve and extract a screenshot for every sampled frame**, using the
    same nearest-available-frame strategy as script 2, recording both the
@@ -584,7 +580,7 @@ Per selected pool, written to `output_folder/{qc_mode}_{timestamp}/`:
   remain resolvable relative to the `Screenshots/` subfolder for
   `4.lmt_qc_validator.py` to locate images.
 - Every row written for a given output file must carry the same `QC_MODE`
-  value — script 4 reads it from the first row only and does not support a
+  value, script 4 reads it from the first row only and does not support a
   mixed-mode file.
 
 ### Open Source Notes
@@ -603,17 +599,16 @@ Per selected pool, written to `output_folder/{qc_mode}_{timestamp}/`:
 
 ### Overview
 This script exists to close the loop: it is the only part of the pipeline
-that produces an actual accuracy number. Everything upstream — geometric
-heuristics, binary search, random sampling — is a mechanism for producing a
-classification; this script is where a human directly compares that
-classification against what they can see with their own eyes, for a
-statistically meaningful sample, and where the pipeline's real-world error
-rate is finally measured rather than assumed.
+that produces an actual accuracy number. Everything upstream is a mechanism 
+for producing a classification; this script is where a human directly 
+compares that classification against what they can see with their own eyes, 
+for a statistically meaningful sample, and where the pipeline's real-world 
+error rate is finally measured rather than assumed.
 
 Loads a `3.lmt_qc_sampler.py` output, determines the active QC mode from the
 `QC_MODE` column (with legacy fallbacks), filters to the eligible rows for
-that mode, and presents each sampled screenshot — plus, for `ASSUMED`-type
-modes, the gap's before/after boundary frames re-extracted from video — to a
+that mode, and presents each sampled screenshot, plus, for `ASSUMED`-type
+modes, the gap's before/after boundary frames re-extracted from video, to a
 human reviewer for manual "IN NEST"/"OUT OF NEST" labeling. Saves progress
 after every label, and on completion computes a two-class confusion matrix
 (algorithm prediction = `IN_NEST` vs. human ground truth = `MANUAL_QC`) and
@@ -644,12 +639,12 @@ Columns are identical to script 3's output table, plus:
 1. **Load the sample** and resolve the active QC mode from the first row's
    `QC_MODE` value (falling back to a legacy `"ASSUMED"` mode for older
    files), then re-apply the same eligibility filter script 3 used to build
-   that pool — a defensive re-check against a hand-edited or unexpected
+   that pool, a defensive re-check against a hand-edited or unexpected
    input file.
 2. **Present one sample at a time.** `DETECTED`-mode samples show the
    single pre-extracted screenshot. `BINARY_SEARCH`/`LOGIC`/legacy
-   `ASSUMED` samples show a three-panel view — last known frame before the
-   gap, the sampled QC frame, and first known frame after the gap — all
+   `ASSUMED` samples show a three-panel view, last known frame before the
+   gap, the sampled QC frame, and first known frame after the gap, all
    re-extracted live from video using the same nearest-frame resolution
    strategy as scripts 2 and 3, so the reviewer sees the same context the
    original binary-search reviewer had for that gap.
@@ -671,7 +666,7 @@ Columns are identical to script 3's output table, plus:
 
 ### Key Design Decisions & Assumptions
 - **The same nearest-frame video resolution logic is used across scripts
-  2, 3, and 4 on purpose** — accuracy validation is only meaningful if the
+  2, 3, and 4 on purpose.** Accuracy validation is only meaningful if the
   reviewer here is looking at the same substitute frame the pipeline
   actually used to make its decision (or the same one the binary-search
   reviewer originally judged).
@@ -690,10 +685,10 @@ Columns are identical to script 3's output table, plus:
   accuracy, error rate, sensitivity, specificity) is the pipeline's
   canonical accuracy measurement.
 - The `QC_MODE` value is read from the **first row only** of the loaded
-  table to choose filter/display logic for the whole session — input files
+  table to choose filter/display logic for the whole session, input files
   must not mix QC modes.
 - `screenshot` values must remain resolvable as
-  `os.path.join(screenshot_folder, screenshot_nm)` — this script must be
+  `os.path.join(screenshot_folder, screenshot_nm)`, this script must be
   pointed at the same folder script 3 wrote screenshots into.
 - The incremental per-row save relies on `sample_id` existing and being
   unique per row, as guaranteed by script 3's output.
