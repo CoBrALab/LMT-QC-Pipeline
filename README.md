@@ -117,8 +117,6 @@ inspected by this script.
   a failure produces a readable error dialog instead of a console traceback.
 
 ### Do NOT Modify
-- The deletion filter must remain `FRONT_X = -1`. Every downstream script
-  assumes preprocessing has already been applied using this exact rule.
 - The output naming convention `{original_name}_processed.sqlite` is a soft
   convention (no downstream script hardcodes it, they all use file-picker
   dialogs), but changing it will surprise users who rely on it to identify
