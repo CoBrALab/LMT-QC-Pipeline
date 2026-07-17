@@ -251,7 +251,7 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
   (`FRAMENUMBER`, `IN_NEST`, `ASSUMPTION_TYPE`, `GAP_START_FRAME`,
   `GAP_END_FRAME`) are hardcoded in `2.lmt_binary_search.py`'s read query.
 - `GAP_START_FRAME` / `GAP_END_FRAME` must remain "last detected frame
-  before" / "first detected frame after" — script 2 groups and classifies
+  before" / "first detected frame after". Script 2 groups and classifies
   gaps using this exact definition.
 
 ### Open Source Notes
