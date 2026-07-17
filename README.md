@@ -37,7 +37,7 @@ This script exists to give every downstream script a single, well-defined
 notion of "a valid detection row." The raw LMT detector occasionally emits
 placeholder rows for a frame it could not track at all, marked with sentinel
 coordinate values rather than a real position. Every later script in this
-pipeline (gap-filling, binary search, sampling, validation) assumes it is
+pipeline assumes it is
 working with genuinely observed positions, so this cleanup has to happen
 first, once, rather than being re-implemented as a filter in every other
 script.
@@ -75,11 +75,11 @@ inspected by this script.
 
 | Output | Type | Purpose |
 |---|---|---|
-| `{original_name}_processed.sqlite` | SQLite database (full copy of input, `DETECTION` rows removed) | Cleaned input for `1.lmt_gap_fill.py`. |
+| `{original_name}_processed.sqlite` | SQLite database | Cleaned input for `1.lmt_gap_fill.py`. |
 
 ### Processing Steps
 1. **Select input and output** via the GUI file/folder dialogs.
-2. **Overwrite check** — if `{original_name}_processed.sqlite` already exists
+2. **Overwrite check** if `{original_name}_processed.sqlite` already exists
    in the output folder, ask the user to confirm before overwriting it,
    rather than silently replacing a previous run's output.
 3. **Copy the file** with `shutil.copy2`, a single filesystem-level copy,
@@ -95,8 +95,7 @@ inspected by this script.
    `FRONT_X = -1` also has `FRONT_Y`, `FRONT_Z`, `BACK_X`, `BACK_Y`, and
    `BACK_Z` all equal to `-1`. If any row violates this, the mismatch count
    is reported and the user is asked whether to proceed anyway; the
-   deletion filter itself always remains `FRONT_X = -1`, since that is the
-   convention every downstream script expects.
+   deletion filter itself always remains `FRONT_X = -1`.
 7. **Delete in bulk** with a single `DELETE ... WHERE FRONT_X = -1`
    statement, a set-based SQL operation rather than a per-row Python loop,
    which matters when a session has hundreds of thousands of frames.
@@ -112,9 +111,7 @@ inspected by this script.
   re-exporting from LMT.
 - **`FRONT_X = -1` is the invalidity sentinel**, not a `NULL` or a separate
   status column, this mirrors how the LMT detector itself flags an
-  undetected frame. The assumption-validation step exists specifically
-  because this sentinel convention is a property of the *data*, not
-  something this script can guarantee from the schema alone.
+  undetected frame. 
 - **All database work is wrapped in `try`/`except`/`finally`** so the SQLite
   connection is always closed, even if a step fails partway through, and so
   a failure produces a readable error dialog instead of a console traceback.
