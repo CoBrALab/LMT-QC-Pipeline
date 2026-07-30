@@ -29,6 +29,45 @@ Each script's SQLite output is the next script's SQLite input; video files are
 re-supplied independently at each step that needs them (scripts 2, 3, and 4)
 rather than being passed along in the database.
 
+## Setup & Running
+
+This repository is a [uv](https://docs.astral.sh/uv/) project. uv manages
+the Python interpreter, virtual environment, and dependencies together —
+you do not need to create a virtualenv or `pip install` anything by hand.
+
+**Install once:**
+```bash
+uv sync
+```
+This provisions Python 3.11 (pinned in `.python-version`) and installs the
+exact dependency versions pinned in `uv.lock` (numpy, pandas, opencv-python,
+Pillow) into a local `.venv/`.
+
+**Run any script:**
+```bash
+uv run python 0.Preprocessing.py
+uv run python 1.lmt_gap_fill.py
+uv run python 2.lmt_binary_search.py
+uv run python 3.lmt_qc_sampler.py
+uv run python 4.lmt_qc_validator.py
+```
+`uv run` automatically ensures the environment is in sync with `uv.lock`
+before launching, so there's no separate "activate the venv" step.
+
+**Adding or updating a dependency:**
+```bash
+uv add <package>       # add a new dependency
+uv lock --upgrade       # refresh pinned versions in uv.lock
+```
+Both commands update `pyproject.toml`/`uv.lock` together — commit both
+files afterward.
+
+**Note on `tkinter`:** every script has a GUI, so it needs a graphical
+display (X11, Wayland, macOS, or Windows) to run — headless/server
+environments cannot launch these scripts, independent of the uv setup
+above. uv's managed Python build already bundles Tcl/Tk, so no separate
+system `python3-tk` package install is required.
+
 ---
 ## Script: `0.Preprocessing.py`
 
