@@ -1,14 +1,30 @@
-*.sqlite
-*.db
-
-*.png
-*.jpg
-*.jpeg
-
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 
+# uv-managed virtual environment
+.venv/
+
+# Byte-compiled / optimized files, distribution artifacts
+build/
+dist/
+*.egg-info/
+
+# OS / editor cruft
+.DS_Store
+.idea/
 .vscode/
 
-Screenshots*/
-Output*/
+# Pipeline run output (generated SQLite files, screenshots, reports) —
+# not source, and can be large; users regenerate these by running the
+# pipeline against their own data.
+*_processed.sqlite
+lmt_gap_fill_*.sqlite
+lmt_binary_search_*.sqlite
+lmt_qc_sampler_*.sqlite
+lmt_qc_validator_*.sqlite
+LMT_Summary_*.txt
+lmt_qc_validator_*.txt
+_binsearch_tmp/
+Screenshots/
