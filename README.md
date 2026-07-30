@@ -32,8 +32,8 @@ rather than being passed along in the database.
 ## Setup & Running
 
 This repository is a [uv](https://docs.astral.sh/uv/) project. uv manages
-the Python interpreter, virtual environment, and dependencies together —
-you do not need to create a virtualenv or `pip install` anything by hand.
+the Python interpreter, virtual environment, and dependencies together. 
+You do not need to create a virtualenv or `pip install` anything by hand.
 
 **Install once:**
 ```bash
@@ -63,7 +63,7 @@ Both commands update `pyproject.toml`/`uv.lock` together — commit both
 files afterward.
 
 **Note on `tkinter`:** every script has a GUI, so it needs a graphical
-display (X11, Wayland, macOS, or Windows) to run — headless/server
+display (X11, Wayland, macOS, or Windows) to run. Headless/server
 environments cannot launch these scripts, independent of the uv setup
 above. uv's managed Python build already bundles Tcl/Tk, so no separate
 system `python3-tk` package install is required.
