@@ -13,6 +13,8 @@ from tkinter import *
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
 
+date_string = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
 # Video helpers
 def extract_frame_to_label(video_map, global_frame, label_widget, thumb_size=(420, 340)):
     """
@@ -129,7 +131,6 @@ def load_database():
     return df, excluded, qc_mode
 
 def save_database():
-    date_string = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     output_db   = os.path.join(screenshot_folder, f"lmt_qc_validator_{date_string}.sqlite")
     conn        = sqlite3.connect(output_db)
     df.to_sql("QC_ASSUMED_SAMPLES", conn, if_exists="replace", index=False)
@@ -147,7 +148,7 @@ def save_row(row_index):
     exist on disk), after which each subsequent click only updates the one
     row that actually changed.
     """
-    date_string = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
     output_db   = os.path.join(screenshot_folder, f"lmt_qc_validator_{date_string}.sqlite")
 
     if not os.path.exists(output_db):
@@ -382,7 +383,6 @@ def next_sample():
             f"QC Validation Complete\n\nQC Mode:                {mode_label}\n\nTotal Labelled Samples: {metrics['total_labeled']}\n\nTP ({tp_desc}):  {metrics['TP']}\nFP ({fp_desc}):  {metrics['FP']}\nTN ({tn_desc}):  {metrics['TN']}\nFN ({fn_desc}):  {metrics['FN']}\n\nAccuracy:    {metrics['accuracy']:.4f}\nError Rate:  {metrics['error_rate']:.4f}\nSensitivity: {metrics['sensitivity']:.4f}\nSpecificity: {metrics['specificity']:.4f}\n"
         )
 
-        date_string = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         report_file = os.path.join(screenshot_folder, f"lmt_qc_validator_{date_string}.txt")
 
         with open(report_file, "w") as f:
