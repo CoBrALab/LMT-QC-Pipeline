@@ -1089,12 +1089,14 @@ class BinarySearchGUI:
                 if mid + 1 <= seg_end:
                     self.task_stack.insert(0, _make_subtask(mid + 1, seg_end))
             else:
-                self._refresh_display(task, answer_text="OUT OF NEST \u2014 searching left half", answer_color="red")
                 if seg_start <= mid - 1:
+                    for f in range(mid, seg_end + 1):
+                        self.decisions[f] = 0
                     self.task_stack.insert(0, _make_subtask(seg_start, mid - 1))
                 else:
                     for f in range(mid, seg_end + 1):
                         self.decisions[f] = 0
+                self._refresh_display(task, answer_text="OUT OF NEST — searching left half", answer_color="red")
             self.root.after(300, self._load_next_task)
 
         #  Type 01: out-of-nest → in-nest 
@@ -1106,12 +1108,14 @@ class BinarySearchGUI:
                 if seg_start <= mid - 1:
                     self.task_stack.insert(0, _make_subtask(seg_start, mid - 1))
             else:
-                self._refresh_display(task, answer_text="OUT OF NEST \u2014 searching right half", answer_color="red")
                 if mid + 1 <= seg_end:
+                    for f in range(seg_start, mid + 1):
+                        self.decisions[f] = 0
                     self.task_stack.insert(0, _make_subtask(mid + 1, seg_end))
                 else:
                     for f in range(seg_start, mid + 1):
                         self.decisions[f] = 0
+                self._refresh_display(task, answer_text="OUT OF NEST — searching right half", answer_color="red")
             self.root.after(300, self._load_next_task)
 
     #  Undo / Redo 
@@ -1194,10 +1198,22 @@ class BinarySearchGUI:
 
         final_in_nest[skipped_remaining] = -1
         final_in_nest[decision_remaining] = [
-            self.decisions.get(int(fn), 0) for fn in fn_arr[decision_remaining]
+            self.decisions.get(int(fn), -1) for fn in fn_arr[decision_remaining]
         ]
 
         final_clf = dict(zip(fn_arr.tolist(), final_in_nest.tolist()))
+
+        unresolved = [fn for fn in searchable_frames if final_clf[fn] == -1]
+        if unresolved:
+            messagebox.showerror(
+                "Integrity Check Failed",
+                f"{len(unresolved)} searchable frame(s) never received an explicit "
+                f"binary-search decision (e.g. frame {unresolved[0]}).\n\n"
+                f"No output was written. This indicates a bug in task-stack "
+                f"rebuilding during undo/redo — please report this."
+            )
+            self.root.quit()
+            return
 
         df_out["IN_NEST"] = final_in_nest
 
