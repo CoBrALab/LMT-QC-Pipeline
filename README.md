@@ -792,5 +792,3 @@ Each script also keeps its own thin, script-specific wrapper around this module'
 - **Configuration files / environment variables**: none; all constants are hardcoded module-level values, unchanged from their original per-script definitions.
 - **Expected directory structure**: none — this module has no file I/O of its own beyond frame extraction to a caller-supplied path.
 - **Platform assumptions**: same as any importing script — depends on a working OpenCV video backend; not headless-relevant on its own since this module has no GUI code.
-
----
