@@ -339,8 +339,8 @@ silently dropped.
 
 | Output | Type | Purpose |
 |---|---|---|
-| `lmt_binary_search_<YYYY-MM-DD>.sqlite` | SQLite database, table `GAP_FILL_ANALYSIS` | Final per-frame classification with fill-method bookkeeping, for QC sampling in script 3. |
-| `LMT_Summary_<YYYY-MM-DD>.txt` | Text report | Audit of detection counts, gap types, binary-search results, and internal balance/integrity checks. |
+| `lmt_binary_search_<YYYY-MM-DD_HH-MM-SS>.sqlite` | SQLite database, table `GAP_FILL_ANALYSIS` | Final per-frame classification with fill-method bookkeeping, for QC sampling in script 3. |
+| `LMT_Summary_<YYYY-MM-DD_HH-MM-SS>.txt` | Text report | Audit of detection counts, gap types, binary-search results, and internal balance/integrity checks. |
 | `_binsearch_tmp/` | Temp image cache | Scratch PNGs extracted during review; deleted on successful completion or if the window is closed early. |
 
 `GAP_FILL_ANALYSIS` columns (extends script 1's schema):
@@ -536,7 +536,7 @@ for manual review.
 
 | Input | Type | Purpose |
 |---|---|---|
-| `lmt_binary_search_<date>.sqlite` (script 2 output) | SQLite database, table `GAP_FILL_ANALYSIS` | Fully classified per-frame data to draw QC samples from. |
+| `lmt_binary_search_<YYYY-MM-DD_HH-MM-SS>.sqlite` (script 2 output) | SQLite database, table `GAP_FILL_ANALYSIS` | Fully classified per-frame data to draw QC samples from. |
 | LMT video files (`*.mp4`) | Video | Source of the screenshot images for each sampled frame. |
 | Output folder | Directory | Where per-pool results are written. |
 | Animal ID | Integer | Recorded alongside each sample. |
@@ -549,7 +549,7 @@ Per selected pool, written to `output_folder/{qc_mode}_{timestamp}/`:
 
 | Output | Type | Purpose |
 |---|---|---|
-| `lmt_qc_sampler_<qc_mode>_<YYYY-MM-DD>.sqlite` | SQLite database, table `QC_ASSUMED_SAMPLES` | Metadata for the drawn QC sample. |
+| `lmt_qc_sampler_<qc_mode>_<YYYY-MM-DD_HH-MM-SS>.sqlite` | SQLite database, table `QC_ASSUMED_SAMPLES` | Metadata for the drawn QC sample. |
 | `Screenshots/S####_A<animal_id>_G<frame>_<video>.png` | PNG image | Extracted video frame for each sampled row. |
 
 `QC_ASSUMED_SAMPLES` columns:
@@ -657,7 +657,7 @@ writes a text validation report.
 
 | Input | Type | Purpose |
 |---|---|---|
-| `lmt_qc_sampler_<qc_mode>_<timestamp>.sqlite` (script 3 output) | SQLite database, table `QC_ASSUMED_SAMPLES` | The drawn QC sample to label. |
+| `lmt_qc_sampler_<qc_mode>_<YYYY-MM-DD_HH-MM-SS>.sqlite` (script 3 output) | SQLite database, table `QC_ASSUMED_SAMPLES` | The drawn QC sample to label. |
 | Screenshot folder | Directory of PNGs | Location of images referenced by the `screenshot` column. |
 | LMT video files (optional) | Video | Enables re-extracting gap boundary frames for the three-panel view. |
 
@@ -665,8 +665,8 @@ writes a text validation report.
 
 | Output | Type | Purpose |
 |---|---|---|
-| `lmt_qc_validator_<YYYY-MM-DD>.sqlite` (written into the screenshot folder) | SQLite database, table `QC_ASSUMED_SAMPLES` | The same sample table with human labels recorded. |
-| `lmt_qc_validator_<YYYY-MM-DD>.txt` | Text report | Confusion matrix and accuracy/error-rate/sensitivity/specificity metrics, plus false-positive/false-negative screenshot lists. |
+| `lmt_qc_validator_<YYYY-MM-DD_HH-MM-SS>.sqlite` (written into the screenshot folder) | SQLite database, table `QC_ASSUMED_SAMPLES` | The same sample table with human labels recorded. |
+| `lmt_qc_validator_<YYYY-MM-DD_HH-MM-SS>.txt` | Text report | Confusion matrix and accuracy/error-rate/sensitivity/specificity metrics, plus false-positive/false-negative screenshot lists. |
 
 Columns are identical to script 3's output table, plus:
 
