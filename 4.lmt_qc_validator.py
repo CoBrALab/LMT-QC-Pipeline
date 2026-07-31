@@ -129,7 +129,7 @@ def load_database():
     return df, excluded, qc_mode
 
 def save_database():
-    date_string = datetime.now().strftime("%Y-%m-%d")
+    date_string = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     output_db   = os.path.join(screenshot_folder, f"lmt_qc_validator_{date_string}.sqlite")
     conn        = sqlite3.connect(output_db)
     df.to_sql("QC_ASSUMED_SAMPLES", conn, if_exists="replace", index=False)

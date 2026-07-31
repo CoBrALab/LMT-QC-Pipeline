@@ -1103,7 +1103,7 @@ class BinarySearchGUI:
         bs_input_total = len(neg_frames)
 
         # SAVE SQLITE
-        timestamp  = datetime.now().strftime("%Y-%m-%d")
+        timestamp  = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         out_sqlite = os.path.join(self.output_folder, f"lmt_binary_search_{timestamp}.sqlite")
         conn = sqlite3.connect(out_sqlite)
         df_out.to_sql("GAP_FILL_ANALYSIS", conn, if_exists="replace", index=False)

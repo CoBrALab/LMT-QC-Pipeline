@@ -54,7 +54,7 @@ def filter_pool(df_full, qc_mode):
 
 # Main pipeline
 def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
-    timestamp     = datetime.now().strftime("%Y-%m-%d")
+    timestamp     = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     pool_folder   = os.path.join(output_folder, f"{qc_mode}_{timestamp}")
     screenshot_folder = os.path.join(pool_folder, "Screenshots")
 
