@@ -597,53 +597,6 @@ Per selected pool, written to `output_folder/{qc_mode}_{timestamp}/`:
 7. **Write the pool's SQLite table and screenshot folder**, and report a
    per-pool summary including the sampling seed used.
 
----
-## Script: `lmt_common.py`
-
-### Overview
-
-This module exists to guarantee one thing the pipeline's accuracy depends on: that scripts `2.lmt_binary_search.py`, `3.lmt_qc_sampler.py`, and `4.lmt_qc_validator.py` resolve a given video filename and a given requested global frame number to exactly the same substitute frame, every time. It is not a script, it has no GUI, no `__main__` entry point, and is never run directly. It is a shared library, imported by all three scripts above, holding the video/frame-resolution logic and the QC-pool eligibility rules that used to be three independently hand-maintained copies of the same code.
-
-`3.lmt_qc_sampler.py` draws its QC sample pool using this module's frame-resolution logic, and `4.lmt_qc_validator.py` measures accuracy by comparing a human's manual label against the label the pipeline assigned — that comparison is only meaningful if both scripts (and `2.lmt_binary_search.py`, which produced the underlying `BINARY_SEARCH`/`FILL_SOURCE` bookkeeping in the first place) agree on how a frame number maps to actual video content. Before this module existed, that agreement was enforced by hand-editing three copies in lockstep; this module makes it structural instead.
-
-### Provided to callers
-
-| Export | Kind | Purpose |
-|---|---|---|
-| `DB_FPS`, `FRAME_CONVERSION`, `EXPECTED_VIDEO_FPS`, `FPS_TOLERANCE` | Constants | Encode the relationship between the LMT database frame rate and the video frame rate, and how much a video's actual fps may deviate from that before it's flagged. |
-| `QC_MODE_DETECTED`, `QC_MODE_BINARY_SEARCH`, `QC_MODE_LOGIC`, `QC_MODE_ASSUMED` | Constants | Identify which QC sample pool a caller is filtering for or sampling from. |
-| `get_start_frame(video_name)` | Function | Parses a video filename's `t<digits>` segment into its starting global frame number. |
-| `get_video_frame_count_and_fps(video_path)` | Function | Opens a video once and returns `(frame_count, fps)`. |
-| `build_video_map(video_paths)` | Function | Builds the sorted `{start, end, path}` map used to route a global frame number to a specific video file, and reports any videos that were excluded (unparseable filename) or whose fps deviates beyond tolerance. |
-| `find_nearest_frame_candidates(video_map, global_frame)` | Function | Resolves a requested global frame to the video(s) that can actually supply it, including the nearest-available-frame fallback logic used when the exact frame isn't covered by any video. |
-| `_read_frame_from_video(video_entry, resolved_frame, out_path)` | Function | Seeks to and writes a single resolved frame out to disk, using the shared, cached `cv2.VideoCapture` handles. |
-| `_release_all_captures()` | Function | Releases every cached `cv2.VideoCapture` handle; each script's cleanup/close path calls this. |
-| `compute_qc_pool_mask(df_full, qc_mode)` | Function | Returns `(mask, label)`: the boolean row mask and a human-readable pool name for a requested QC mode (`DETECTED` / `BINARY_SEARCH` / `LOGIC` / `ASSUMED`), given a `GAP_FILL_ANALYSIS`-shaped DataFrame. Includes the fallback logic for older-format outputs that predate the `FILL_SOURCE` column. |
-
-Each script also keeps its own thin, script-specific wrapper around this module's frame-reading primitives (`extract_frame_to_path` in script 2, `extract_frame` in script 3, `extract_frame_to_label` in script 4) — these differ in return signature and, for script 4, drive a GUI widget directly, so they are intentionally not part of this shared module.
-
-### Key Design Decisions & Assumptions
-
-- **Extracted, not reimplemented.** Every function and constant in this module is a verbatim move from `2.lmt_binary_search.py`'s original copy; nothing was rewritten or altered during extraction, to keep this refactor behavior-invariant.
-- **A single in-process video-capture cache.** `_get_capture()`'s cache and `_release_all_captures()` are now shared across every script that imports this module within one process, this matches each script's existing single-session, single-process usage pattern and requires no change to caller behavior.
-- **`compute_qc_pool_mask()` centralizes pool eligibility, not just frame resolution.** This was originally two independent implementations (`3.lmt_qc_sampler.py`'s `filter_pool()` and an inline block in `4.lmt_qc_validator.py`'s `load_database()`) that had already begun to drift — script 4 had a `QC_MODE_ASSUMED` legacy-pool branch script 3 did not. Both call sites now go through the same function.
-
-### Do NOT Modify
-
-- **Any change to `get_start_frame()`, `build_video_map()`, or `find_nearest_frame_candidates()` changes frame resolution for all three calling scripts simultaneously.**
-- **`DB_FPS = 30` and `FRAME_CONVERSION = 2` must stay in sync** with the actual LMT database and video export frame rates; wrong values silently extract the wrong frames across every script that imports this module.
-- **`compute_qc_pool_mask()`'s fallback branches (used when `FILL_SOURCE` is absent) must stay behaviorally identical to script 3's original `filter_pool()` logic** they exist specifically to keep older, pre-`FILL_SOURCE` `2.lmt_binary_search.py` outputs sampling/validating correctly.
-
-### Open Source Notes
-
-- **External dependencies**: `opencv-python` (`cv2`).
-- **Standard library**: `os`, `re`.
-- **Configuration files / environment variables**: none; all constants are hardcoded module-level values, unchanged from their original per-script definitions.
-- **Expected directory structure**: none — this module has no file I/O of its own beyond frame extraction to a caller-supplied path.
-- **Platform assumptions**: same as any importing script — depends on a working OpenCV video backend; not headless-relevant on its own since this module has no GUI code.
-
----
-
 ### Key Design Decisions & Assumptions
 - **Pool-based sampling, not one pooled-together sample.** `DETECTED`,
   `LOGIC`, and `BINARY_SEARCH` rows represent three structurally different
@@ -795,3 +748,49 @@ Columns are identical to script 3's output table, plus:
   on error); not headless-safe. Video files are cached open for the
   session and released when the window is closed.
 
+---
+## Script: `lmt_common.py`
+
+### Overview
+
+This module exists to guarantee one thing the pipeline's accuracy depends on: that scripts `2.lmt_binary_search.py`, `3.lmt_qc_sampler.py`, and `4.lmt_qc_validator.py` resolve a given video filename and a given requested global frame number to exactly the same substitute frame, every time. It is not a script, it has no GUI, no `__main__` entry point, and is never run directly. It is a shared library, imported by all three scripts above, holding the video/frame-resolution logic and the QC-pool eligibility rules that used to be three independently hand-maintained copies of the same code.
+
+`3.lmt_qc_sampler.py` draws its QC sample pool using this module's frame-resolution logic, and `4.lmt_qc_validator.py` measures accuracy by comparing a human's manual label against the label the pipeline assigned — that comparison is only meaningful if both scripts (and `2.lmt_binary_search.py`, which produced the underlying `BINARY_SEARCH`/`FILL_SOURCE` bookkeeping in the first place) agree on how a frame number maps to actual video content. Before this module existed, that agreement was enforced by hand-editing three copies in lockstep; this module makes it structural instead.
+
+### Provided to callers
+
+| Export | Kind | Purpose |
+|---|---|---|
+| `DB_FPS`, `FRAME_CONVERSION`, `EXPECTED_VIDEO_FPS`, `FPS_TOLERANCE` | Constants | Encode the relationship between the LMT database frame rate and the video frame rate, and how much a video's actual fps may deviate from that before it's flagged. |
+| `QC_MODE_DETECTED`, `QC_MODE_BINARY_SEARCH`, `QC_MODE_LOGIC`, `QC_MODE_ASSUMED` | Constants | Identify which QC sample pool a caller is filtering for or sampling from. |
+| `get_start_frame(video_name)` | Function | Parses a video filename's `t<digits>` segment into its starting global frame number. |
+| `get_video_frame_count_and_fps(video_path)` | Function | Opens a video once and returns `(frame_count, fps)`. |
+| `build_video_map(video_paths)` | Function | Builds the sorted `{start, end, path}` map used to route a global frame number to a specific video file, and reports any videos that were excluded (unparseable filename) or whose fps deviates beyond tolerance. |
+| `find_nearest_frame_candidates(video_map, global_frame)` | Function | Resolves a requested global frame to the video(s) that can actually supply it, including the nearest-available-frame fallback logic used when the exact frame isn't covered by any video. |
+| `_read_frame_from_video(video_entry, resolved_frame, out_path)` | Function | Seeks to and writes a single resolved frame out to disk, using the shared, cached `cv2.VideoCapture` handles. |
+| `_release_all_captures()` | Function | Releases every cached `cv2.VideoCapture` handle; each script's cleanup/close path calls this. |
+| `compute_qc_pool_mask(df_full, qc_mode)` | Function | Returns `(mask, label)`: the boolean row mask and a human-readable pool name for a requested QC mode (`DETECTED` / `BINARY_SEARCH` / `LOGIC` / `ASSUMED`), given a `GAP_FILL_ANALYSIS`-shaped DataFrame. Includes the fallback logic for older-format outputs that predate the `FILL_SOURCE` column. |
+
+Each script also keeps its own thin, script-specific wrapper around this module's frame-reading primitives (`extract_frame_to_path` in script 2, `extract_frame` in script 3, `extract_frame_to_label` in script 4) — these differ in return signature and, for script 4, drive a GUI widget directly, so they are intentionally not part of this shared module.
+
+### Key Design Decisions & Assumptions
+
+- **Extracted, not reimplemented.** Every function and constant in this module is a verbatim move from `2.lmt_binary_search.py`'s original copy; nothing was rewritten or altered during extraction, to keep this refactor behavior-invariant.
+- **A single in-process video-capture cache.** `_get_capture()`'s cache and `_release_all_captures()` are now shared across every script that imports this module within one process, this matches each script's existing single-session, single-process usage pattern and requires no change to caller behavior.
+- **`compute_qc_pool_mask()` centralizes pool eligibility, not just frame resolution.** This was originally two independent implementations (`3.lmt_qc_sampler.py`'s `filter_pool()` and an inline block in `4.lmt_qc_validator.py`'s `load_database()`) that had already begun to drift — script 4 had a `QC_MODE_ASSUMED` legacy-pool branch script 3 did not. Both call sites now go through the same function.
+
+### Do NOT Modify
+
+- **Any change to `get_start_frame()`, `build_video_map()`, or `find_nearest_frame_candidates()` changes frame resolution for all three calling scripts simultaneously.**
+- **`DB_FPS = 30` and `FRAME_CONVERSION = 2` must stay in sync** with the actual LMT database and video export frame rates; wrong values silently extract the wrong frames across every script that imports this module.
+- **`compute_qc_pool_mask()`'s fallback branches (used when `FILL_SOURCE` is absent) must stay behaviorally identical to script 3's original `filter_pool()` logic** they exist specifically to keep older, pre-`FILL_SOURCE` `2.lmt_binary_search.py` outputs sampling/validating correctly.
+
+### Open Source Notes
+
+- **External dependencies**: `opencv-python` (`cv2`).
+- **Standard library**: `os`, `re`.
+- **Configuration files / environment variables**: none; all constants are hardcoded module-level values, unchanged from their original per-script definitions.
+- **Expected directory structure**: none — this module has no file I/O of its own beyond frame extraction to a caller-supplied path.
+- **Platform assumptions**: same as any importing script — depends on a working OpenCV video backend; not headless-relevant on its own since this module has no GUI code.
+
+---
