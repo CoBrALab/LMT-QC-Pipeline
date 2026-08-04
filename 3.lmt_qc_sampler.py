@@ -1,4 +1,5 @@
 import os
+import numpy as np
 import re
 import random
 import cv2
@@ -27,6 +28,50 @@ def extract_frame(video_map, global_frame, out_path):
         if _read_frame_from_video(video_entry, resolved_frame, out_path):
             return resolved_frame, os.path.basename(video_entry["path"])
     return None, None
+
+def _sample_proportional_to_gap(df, n_samples, seed):
+    rng = np.random.default_rng(seed)
+
+    if "GAP_START_FRAME" not in df.columns or "GAP_END_FRAME" not in df.columns:
+        idx = rng.choice(df.index.to_numpy(), size=n_samples, replace=False)
+        return df.loc[idx].copy()
+
+    grouped = df.groupby(["GAP_START_FRAME", "GAP_END_FRAME"], dropna=False, sort=False)
+    sizes   = grouped.size().to_numpy()          # positional, not key-indexed
+
+    quotas     = sizes / sizes.sum() * n_samples
+    allocation = np.floor(quotas).astype(int)
+    remainder  = quotas - allocation
+    leftover   = n_samples - int(allocation.sum())
+
+    # Largest-remainder apportionment, by position rather than by group key
+    # (group keys can be NaN — e.g. the DETECTED pool, which has no real
+    # gap boundaries — and NaN keys don't reliably round-trip through
+    # pandas' equality-based Series/index lookups).
+    for pos in np.argsort(-remainder):
+        if leftover <= 0:
+            break
+        if allocation[pos] < sizes[pos]:
+            allocation[pos] += 1
+            leftover -= 1
+
+    if leftover > 0:  # safety net; see previous write-up
+        for pos in range(len(allocation)):
+            while leftover > 0 and allocation[pos] < sizes[pos]:
+                allocation[pos] += 1
+                leftover -= 1
+            if leftover <= 0:
+                break
+
+    parts = []
+    for pos, (_key, group_df) in enumerate(grouped):
+        count = int(allocation[pos])
+        if count <= 0:
+            continue
+        chosen_idx = rng.choice(group_df.index.to_numpy(), size=count, replace=False)
+        parts.append(group_df.loc[chosen_idx])
+
+    return pd.concat(parts)
 
 # Pool filtering
 def filter_pool(df_full, qc_mode):
@@ -103,7 +148,7 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
     # seed is recorded and reported below so this exact sample can be
     # reproduced later if needed 
     sample_seed = random.randint(0, 2**31 - 1)
-    df_sample = df.sample(n=n_samples, random_state=sample_seed).sort_values("FRAMENUMBER").reset_index(drop=True)
+    df_sample = _sample_proportional_to_gap(df, n_samples, sample_seed).sort_values("FRAMENUMBER").reset_index(drop=True)
 
     video_map, skipped_videos, fps_mismatches = build_video_map(video_paths)
     if not video_map:
