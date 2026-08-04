@@ -95,13 +95,13 @@ def filter_pool(df_full, qc_mode):
     mask, label = compute_qc_pool_mask(df_full, qc_mode)
     return df_full[mask].copy().reset_index(drop=True), label
 
-def _verify_animal_id(analysis_db, animal_id):
+def _load_animal_id(analysis_db):
     """
-    Confirm the entered Animal ID matches the ANIMALID recorded in the
-    source database. Called once, before any pool is processed and before
-    any output directory is created. Raises Exception on mismatch or
-    ambiguous data; shows a non-fatal warning for pre-Issue-10 databases
-    that lack the ANIMALID column.
+    Read the Animal ID directly from the source database's ANIMALID column
+    (persisted by 1.lmt_gap_fill.py since Issue 10), instead of asking the
+    user to re-type it. Called before any output directory/file is created.
+    Raises Exception if the database predates that column, or if it
+    unexpectedly contains more than one Animal ID.
     """
     conn = sqlite3.connect(analysis_db)
     try:
@@ -110,34 +110,28 @@ def _verify_animal_id(analysis_db, animal_id):
         table = "GAP_FILL_ANALYSIS" if cursor.fetchone() else "ASSUMED_FRAMES"
         cols = pd.read_sql_query(f"SELECT * FROM {table} LIMIT 0", conn).columns
         if "ANIMALID" not in cols:
-            messagebox.showwarning(
-                "Animal ID Not Verified",
+            raise Exception(
                 f"This database predates the ANIMALID column, so the Animal ID "
-                f"you entered ({animal_id}) cannot be automatically verified "
-                f"against the source data. Please double-check it is correct."
+                f"cannot be read automatically. Please regenerate it with the "
+                f"current 1.lmt_gap_fill.py."
             )
-            return
         stored_ids = pd.read_sql_query(f"SELECT DISTINCT ANIMALID FROM {table}", conn)["ANIMALID"].tolist()
     finally:
         conn.close()
 
-    if len(stored_ids) > 1:
+    if len(stored_ids) != 1:
         raise Exception(
-            f"This database contains rows for multiple Animal IDs "
-            f"({sorted(int(i) for i in stored_ids)}), which should not "
-            f"happen for a single gap-fill/binary-search run. Please "
-            f"regenerate it from a single-animal run."
+            f"Expected exactly one Animal ID in this database, found "
+            f"{sorted(int(i) for i in stored_ids)}. This should not happen "
+            f"for a single gap-fill/binary-search run; please regenerate it "
+            f"from a single-animal run."
         )
-    if int(stored_ids[0]) != int(animal_id):
-        raise Exception(
-            f"Animal ID mismatch: you entered Animal ID {animal_id}, but "
-            f"this database was generated for Animal ID {int(stored_ids[0])}. "
-            f"Please re-check the Animal ID field or select the correct "
-            f"source database."
-        )
+    return int(stored_ids[0])
 
 # Main pipeline
-def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
+def run(analysis_db, video_paths, output_folder, n_samples, qc_mode):
+    animal_id = _load_animal_id(analysis_db)
+
     timestamp     = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     pool_folder   = os.path.join(output_folder, f"{qc_mode}_A{animal_id}_{timestamp}")
     screenshot_folder = os.path.join(pool_folder, "Screenshots")
@@ -301,16 +295,12 @@ def start():
             messagebox.showerror("Error", "Please select an output folder.")
             return
 
-        animal_id = int(entry_animal.get())
-
         raw = entry_samples.get().strip()
         if not raw.isdigit() or int(raw) <= 0:
             messagebox.showerror(
                 "Error", "Number of samples must be a positive integer.")
             return
         n_samples = int(raw)
-
-        _verify_animal_id(analysis_db, animal_id)
 
         selected_pools = [
             mode for mode, var in [
@@ -329,8 +319,7 @@ def start():
         try:
             for qc_mode in selected_pools:
                 try:
-                    summary = run(analysis_db, videos, out_folder,
-                                  animal_id, n_samples, qc_mode)
+                    summary = run(analysis_db, videos, out_folder, n_samples, qc_mode)
                     summaries.append(summary)
                 except Exception as e:
                     errors.append(f"{qc_mode}: {e}")
@@ -378,11 +367,6 @@ label_vid.pack()
 Button(root, text="Select Output Folder", command=select_out).pack(pady=5)
 label_out = Label(root, text="No output folder selected", wraplength=700)
 label_out.pack()
-
-Label(root, text="Animal ID").pack()
-entry_animal = Entry(root)
-entry_animal.insert(0, "1")
-entry_animal.pack()
 
 Label(root, text="How many samples would you like? (applied per pool)").pack(pady=(15, 2))
 entry_samples = Entry(root)
