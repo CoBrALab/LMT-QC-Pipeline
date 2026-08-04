@@ -150,6 +150,7 @@ def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_
         "ASSUMPTION_TYPE": "DETECTED",
         "GAP_START_FRAME": None,
         "GAP_END_FRAME":   None,
+        "ANIMALID":        animal_id,
     })
 
     assumed_df = pd.DataFrame({
@@ -158,6 +159,7 @@ def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_
         "ASSUMPTION_TYPE": "ASSUMED",
         "GAP_START_FRAME": gap_start_assumed,
         "GAP_END_FRAME":   gap_end_assumed,
+        "ANIMALID":        animal_id,
     })
 
     # Concatenating and sorting by FRAMENUMBER reproduces the original row
@@ -167,7 +169,7 @@ def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_
     output_df = output_df.sort_values("FRAMENUMBER").reset_index(drop=True)
 
     current_date_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    sqlite_name = f"lmt_gap_fill_{current_date_time}.sqlite"
+    sqlite_name = f"lmt_gap_fill_A{animal_id}_{current_date_time}.sqlite"
 
     output_sqlite = os.path.join(output_folder, sqlite_name)
 

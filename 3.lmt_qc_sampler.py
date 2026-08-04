@@ -14,7 +14,6 @@ from datetime import datetime
 from tkinter import *
 from tkinter import filedialog, messagebox
 
-# Video helpers
 def extract_frame(video_map, global_frame, out_path):
     """
     Resolve global_frame to the nearest actually-available frame (preceding
@@ -73,7 +72,6 @@ def _sample_proportional_to_gap(df, n_samples, seed):
 
     return pd.concat(parts)
 
-# Pool filtering
 def filter_pool(df_full, qc_mode):
     """
     Return the eligible subset of df_full for the requested pool.
@@ -97,10 +95,51 @@ def filter_pool(df_full, qc_mode):
     mask, label = compute_qc_pool_mask(df_full, qc_mode)
     return df_full[mask].copy().reset_index(drop=True), label
 
+def _verify_animal_id(analysis_db, animal_id):
+    """
+    Confirm the entered Animal ID matches the ANIMALID recorded in the
+    source database. Called once, before any pool is processed and before
+    any output directory is created. Raises Exception on mismatch or
+    ambiguous data; shows a non-fatal warning for pre-Issue-10 databases
+    that lack the ANIMALID column.
+    """
+    conn = sqlite3.connect(analysis_db)
+    try:
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='GAP_FILL_ANALYSIS'")
+        table = "GAP_FILL_ANALYSIS" if cursor.fetchone() else "ASSUMED_FRAMES"
+        cols = pd.read_sql_query(f"SELECT * FROM {table} LIMIT 0", conn).columns
+        if "ANIMALID" not in cols:
+            messagebox.showwarning(
+                "Animal ID Not Verified",
+                f"This database predates the ANIMALID column, so the Animal ID "
+                f"you entered ({animal_id}) cannot be automatically verified "
+                f"against the source data. Please double-check it is correct."
+            )
+            return
+        stored_ids = pd.read_sql_query(f"SELECT DISTINCT ANIMALID FROM {table}", conn)["ANIMALID"].tolist()
+    finally:
+        conn.close()
+
+    if len(stored_ids) > 1:
+        raise Exception(
+            f"This database contains rows for multiple Animal IDs "
+            f"({sorted(int(i) for i in stored_ids)}), which should not "
+            f"happen for a single gap-fill/binary-search run. Please "
+            f"regenerate it from a single-animal run."
+        )
+    if int(stored_ids[0]) != int(animal_id):
+        raise Exception(
+            f"Animal ID mismatch: you entered Animal ID {animal_id}, but "
+            f"this database was generated for Animal ID {int(stored_ids[0])}. "
+            f"Please re-check the Animal ID field or select the correct "
+            f"source database."
+        )
+
 # Main pipeline
 def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
     timestamp     = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    pool_folder   = os.path.join(output_folder, f"{qc_mode}_{timestamp}")
+    pool_folder   = os.path.join(output_folder, f"{qc_mode}_A{animal_id}_{timestamp}")
     screenshot_folder = os.path.join(pool_folder, "Screenshots")
 
     # Guard against silently overwriting a previous run's screenshots/SQLite
@@ -215,7 +254,7 @@ def run(analysis_db, video_paths, output_folder, animal_id, n_samples, qc_mode):
     if not results:
         raise Exception("No screenshots could be extracted. Check that the videos cover the sampled frame numbers.")
 
-    out_db = os.path.join(pool_folder, f"lmt_qc_sampler_{qc_mode}_{timestamp}.sqlite")
+    out_db = os.path.join(pool_folder, f"lmt_qc_sampler_{qc_mode}_A{animal_id}_{timestamp}.sqlite")
 
     conn = sqlite3.connect(out_db)
     pd.DataFrame(results).to_sql("QC_ASSUMED_SAMPLES", conn, if_exists="replace", index=False)
@@ -253,7 +292,7 @@ def select_out():
 def start():
     try:
         if not analysis_db:
-            messagebox.showerror("Error", "Please select lmt_binary_search_<date>.sqlite.")
+            messagebox.showerror("Error", "Please select lmt_binary_search__A<animal_id>_<timestamp>.sqlite.")
             return
         if not videos:
             messagebox.showerror("Error", "Please select at least one LMT video.")
@@ -270,6 +309,8 @@ def start():
                 "Error", "Number of samples must be a positive integer.")
             return
         n_samples = int(raw)
+
+        _verify_animal_id(analysis_db, animal_id)
 
         selected_pools = [
             mode for mode, var in [
@@ -320,13 +361,13 @@ Label(root, text="LMT Random QC Sampler",
       font=("Arial", 16, "bold")).pack(pady=10)
 
 Label(root,
-      text=("Randomly selects frames from the lmt_gap_fill_<date>.sqlite GAP_FILL_ANALYSIS table\n"
+      text=("Randomly selects frames from the lmt_gap_fill__A<animal_id>_<timestamp>.sqlite GAP_FILL_ANALYSIS table\n"
           "and extracts their screenshots for manual quality control.\n\n"
           "Select QC pool(s). Each type produces its own SQLite\n"
           "and screenshot folder, labelled with the type and a shared timestamp."),
       font=("Arial", 10), justify=CENTER).pack(pady=5)
 
-Button(root, text="Select lmt_binary_search_<date>.sqlite", command=select_db).pack(pady=5)
+Button(root, text="Select lmt_binary_search__A<animal_id>_<timestamp>.sqlite", command=select_db).pack(pady=5)
 label_db = Label(root, text="No file selected", wraplength=700)
 label_db.pack()
 

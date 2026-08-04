@@ -14,6 +14,7 @@ from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
 
 date_string = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+animal_label = "Aunknown"
 
 # Video helpers
 def extract_frame_to_label(video_map, global_frame, label_widget, thumb_size=(420, 340)):
@@ -131,7 +132,7 @@ def load_database():
     return df, excluded, qc_mode
 
 def save_database():
-    output_db   = os.path.join(screenshot_folder, f"lmt_qc_validator_{date_string}.sqlite")
+    output_db   = os.path.join(screenshot_folder, f"lmt_qc_validator_{animal_label}_{date_string}.sqlite")
     conn        = sqlite3.connect(output_db)
     df.to_sql("QC_ASSUMED_SAMPLES", conn, if_exists="replace", index=False)
     conn.close()
@@ -149,7 +150,7 @@ def save_row(row_index):
     row that actually changed.
     """
 
-    output_db   = os.path.join(screenshot_folder, f"lmt_qc_validator_{date_string}.sqlite")
+    output_db   = os.path.join(screenshot_folder, f"lmt_qc_validator_{animal_label}_{date_string}.sqlite")
 
     if not os.path.exists(output_db):
         save_database()
@@ -383,7 +384,7 @@ def next_sample():
             f"QC Validation Complete\n\nQC Mode:                {mode_label}\n\nTotal Labelled Samples: {metrics['total_labeled']}\n\nTP ({tp_desc}):  {metrics['TP']}\nFP ({fp_desc}):  {metrics['FP']}\nTN ({tn_desc}):  {metrics['TN']}\nFN ({fn_desc}):  {metrics['FN']}\n\nAccuracy:    {metrics['accuracy']:.4f}\nError Rate:  {metrics['error_rate']:.4f}\nSensitivity: {metrics['sensitivity']:.4f}\nSpecificity: {metrics['specificity']:.4f}\n"
         )
 
-        report_file = os.path.join(screenshot_folder, f"lmt_qc_validator_{date_string}.txt")
+        report_file = os.path.join(screenshot_folder, f"lmt_qc_validator_{animal_label}_{date_string}.txt")
 
         with open(report_file, "w") as f:
             f.write("LMT QC Validation Report\n\n")
@@ -486,6 +487,12 @@ def start_qc():
         video_map = []
 
     loaded_df, excluded, qc_mode = load_database()
+    global animal_label
+
+    if "animal_id" in loaded_df.columns and len(loaded_df):
+        animal_label = f"A{int(loaded_df['animal_id'].iloc[0])}"
+    else:
+        animal_label = "Aunknown"
 
     if len(loaded_df) == 0:
         filter_desc_map = {
@@ -546,7 +553,7 @@ root.protocol("WM_DELETE_WINDOW", _on_close)
 top_frame = Frame(root)
 top_frame.pack(pady=10)
 
-Button(top_frame, text="Select lmt_qc_sampler_<qc_mode>_<timestamp>.sqlite", command=select_database).grid(row=0, column=0, padx=10)
+Button(top_frame, text="Select lmt_qc_sampler_<qc_mode>__A<animal_id>_<timestamp>.sqlite", command=select_database).grid(row=0, column=0, padx=10)
 db_label = Label(top_frame, text="No database selected", wraplength=500)
 db_label.grid(row=0, column=1)
 

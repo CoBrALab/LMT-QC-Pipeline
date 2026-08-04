@@ -656,7 +656,7 @@ class BinarySearchGUI:
 
         Label(self.setup_frame, text=("Fills ASSUMED frames where IN_NEST = -1 using boundary-aware binary search.\n  \u2022 Type 00 (out \u2192 out): skipped, remain IN_NEST = -1\n  \u2022 Type 01 (out \u2192 in): inverse binary search for nest entry\n  \u2022 Type 10 (in \u2192 out): standard binary search for nest exit\n  \u2022 Type 11 (in \u2192 in): skipped, 1.lmt_gap_fill.py should have logic-filled these\n  \u2022 Gaps \u2264 {MIN_GAP_DURATION_FOR_BINARY_SEARCH}s: also skipped\n\nEach gap shows:  LEFT = last detected before gap  |  CENTER = frame under review  |  RIGHT = first detected after gap\n\nKeyboard:  A = IN NEST    D = OUT OF NEST    \u2190 = Undo    \u2192 = Redo"),font=("Arial", 11), justify=LEFT).pack(pady=10)
 
-        Button(self.setup_frame, text="Select lmt_gap_fill_<date>.sqlite", command=self._select_db).pack(pady=5)
+        Button(self.setup_frame, text= "Select lmt_gap_fill__A<animal_id>_<timestamp>.sqlite", command=self._select_db).pack(pady=5)
         self.lbl_db = Label(self.setup_frame, text="No database selected", wraplength=1000)
         self.lbl_db.pack()
 
@@ -1104,13 +1104,14 @@ class BinarySearchGUI:
 
         # SAVE SQLITE
         timestamp  = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        out_sqlite = os.path.join(self.output_folder, f"lmt_binary_search_{timestamp}.sqlite")
+        animal_label = f"A{int(self.df_all['ANIMALID'].iloc[0])}" if "ANIMALID" in self.df_all.columns else "Aunknown"
+        out_sqlite = os.path.join(self.output_folder, f"lmt_binary_search_{animal_label}_{timestamp}.sqlite")
         conn = sqlite3.connect(out_sqlite)
         df_out.to_sql("GAP_FILL_ANALYSIS", conn, if_exists="replace", index=False)
         conn.close()
 
         # WRITE REPORT
-        report_path = os.path.join(self.output_folder, f"LMT_Summary_{timestamp}.txt")
+        report_path = os.path.join(self.output_folder, f"LMT_Summary_{animal_label}_{timestamp}.txt")
         try:
             write_summary_report(
                 report_path,
