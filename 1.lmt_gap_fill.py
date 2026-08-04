@@ -37,6 +37,27 @@ def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_
     NEST        = {"xmin": nest_xmin,   "xmax": nest_xmax,   "ymin": nest_ymin,   "ymax": nest_ymax}
     NEST_BUFFER = {"xmin": buffer_xmin, "xmax": buffer_xmax, "ymin": buffer_ymin, "ymax": buffer_ymax}
 
+    if not (nest_xmin < nest_xmax and nest_ymin < nest_ymax):
+        raise Exception(
+            f"Invalid nest ROI: xmin/xmax must satisfy xmin < xmax and "
+            f"ymin < ymax. Got xmin={nest_xmin}, xmax={nest_xmax}, "
+            f"ymin={nest_ymin}, ymax={nest_ymax}."
+        )
+    if not (buffer_xmin < buffer_xmax and buffer_ymin < buffer_ymax):
+        raise Exception(
+            f"Invalid buffer ROI: xmin/xmax must satisfy xmin < xmax and "
+            f"ymin < ymax. Got xmin={buffer_xmin}, xmax={buffer_xmax}, "
+            f"ymin={buffer_ymin}, ymax={buffer_ymax}."
+        )
+    if not (buffer_xmin <= nest_xmin and buffer_xmax >= nest_xmax and
+            buffer_ymin <= nest_ymin and buffer_ymax >= nest_ymax):
+        raise Exception(
+            f"Invalid ROI configuration: the buffer ROI must fully contain "
+            f"the nest ROI. Nest=({nest_xmin}, {nest_xmax}, {nest_ymin}, "
+            f"{nest_ymax}), Buffer=({buffer_xmin}, {buffer_xmax}, "
+            f"{buffer_ymin}, {buffer_ymax})."
+        )
+
     def in_roi_vec(x, y, roi):
         return (roi["xmin"] < x) & (x < roi["xmax"]) & (roi["ymin"] < y) & (y < roi["ymax"])
 
