@@ -350,7 +350,7 @@ Label(root, text="LMT Random QC Sampler",
       font=("Arial", 16, "bold")).pack(pady=10)
 
 Label(root,
-      text=("Randomly selects frames from the lmt_gap_fill__A<animal_id>_<timestamp>.sqlite GAP_FILL_ANALYSIS table\n"
+      text=("Randomly selects frames from the lmt_binary_search__A<animal_id>_<timestamp>.sqlite\n"
           "and extracts their screenshots for manual quality control.\n\n"
           "Select QC pool(s). Each type produces its own SQLite\n"
           "and screenshot folder, labelled with the type and a shared timestamp."),
