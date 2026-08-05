@@ -1,5 +1,5 @@
 """
-0.lmt_trajectory.py
+1.lmt_trajectory.py
 -------------------
 Standalone trajectory and stationary-duration analysis for a single animal.
 
@@ -181,7 +181,7 @@ def run_analysis(input_db, output_folder, animal_id):
 
     recording_sec = (frames_arr[-1] - frames_arr[0]) / DB_FPS
 
-    # ── Trajectory plot ───────────────────────────────────────────────────────
+    # Trajectory plot 
     logging.info("Generating trajectory plot …")
     norm_t  = (frames_arr - frames_arr[0]) / max(frames_arr[-1] - frames_arr[0], 1)
     colours = cm.plasma(norm_t)
@@ -215,7 +215,7 @@ def run_analysis(input_db, output_folder, animal_id):
     plt.close(fig)
     logging.info(f"  Saved: {traj_png}")
 
-    # ── Stationary bouts ──────────────────────────────────────────────────────
+    # Stationary bouts 
     logging.info("Computing stationary bouts …")
     bouts     = compute_stationary_bouts(df)
     bouts_min = [b / 60.0 for b in bouts]
@@ -223,7 +223,7 @@ def run_analysis(input_db, output_folder, animal_id):
 
     suggested_min = suggest_threshold_minutes(bouts)
 
-    # ── Gap analysis ──────────────────────────────────────────────────────────
+    # Gap analysis 
     gap_df      = compute_gap_table(df)
     gap_csv     = os.path.join(output_folder, f"gaps_A{animal_id}_{date_str}.csv")
     gap_hist_png = os.path.join(output_folder, f"gap_hist_A{animal_id}_{date_str}.png")
@@ -292,7 +292,7 @@ def run_analysis(input_db, output_folder, animal_id):
     plt.close(fig2)
     logging.info(f"  Saved: {hist_png}")
 
-    # ── Summary stats ─────────────────────────────────────────────────────────
+    # Summary stats 
     if bouts:
         b_arr    = np.array(bouts)
         mean_s   = float(b_arr.mean())
@@ -380,7 +380,7 @@ def run_analysis(input_db, output_folder, animal_id):
     )
 
 
-# ── GUI ───────────────────────────────────────────────────────────────────────
+# GUI 
 _input_db     = ""
 _output_folder = ""
 
