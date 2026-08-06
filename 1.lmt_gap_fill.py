@@ -232,7 +232,7 @@ if __name__ == "__main__":
 
     Label(root, text="LMT Gap Fill Assumption Generator", font=("Arial", 16, "bold")).pack(pady=10)
 
-    Button(root, text="Select LMT SQLite Database", command=select_database).pack()
+    Button(root, text="Select <SQLite_Name>_processed.sqlite", command=select_database).pack()
     label_db = Label(root, text="No database selected", wraplength=700)
     label_db.pack(pady=5)
 
