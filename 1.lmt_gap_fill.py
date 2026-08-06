@@ -225,47 +225,48 @@ def start():
     except Exception as e:
         messagebox.showerror("Error", str(e))
 
-root = Tk()
-root.title("LMT Gap Fill Assumption Generator")
-root.geometry("800x850")
+if __name__ == "__main__":
+    root = Tk()
+    root.title("LMT Gap Fill Assumption Generator")
+    root.geometry("800x850")
 
-Label(root, text="LMT Gap Fill Assumption Generator", font=("Arial", 16, "bold")).pack(pady=10)
+    Label(root, text="LMT Gap Fill Assumption Generator", font=("Arial", 16, "bold")).pack(pady=10)
 
-Button(root, text="Select LMT SQLite Database", command=select_database).pack()
-label_db = Label(root, text="No database selected", wraplength=700)
-label_db.pack(pady=5)
+    Button(root, text="Select LMT SQLite Database", command=select_database).pack()
+    label_db = Label(root, text="No database selected", wraplength=700)
+    label_db.pack(pady=5)
 
-Label(root, text="Animal ID").pack()
-entry_animal = Entry(root); entry_animal.insert(0, "1"); entry_animal.pack()
+    Label(root, text="Animal ID").pack()
+    entry_animal = Entry(root); entry_animal.insert(0, "1"); entry_animal.pack()
 
-Label(root, text="Nest X Minimum").pack()
-entry_nest_xmin = Entry(root); entry_nest_xmin.insert(0, "100"); entry_nest_xmin.pack()
+    Label(root, text="Nest X Minimum").pack()
+    entry_nest_xmin = Entry(root); entry_nest_xmin.insert(0, "100"); entry_nest_xmin.pack()
 
-Label(root, text="Nest X Maximum").pack()
-entry_nest_xmax = Entry(root); entry_nest_xmax.insert(0, "250"); entry_nest_xmax.pack()
+    Label(root, text="Nest X Maximum").pack()
+    entry_nest_xmax = Entry(root); entry_nest_xmax.insert(0, "250"); entry_nest_xmax.pack()
 
-Label(root, text="Nest Y Minimum").pack()
-entry_nest_ymin = Entry(root); entry_nest_ymin.insert(0, "50"); entry_nest_ymin.pack()
+    Label(root, text="Nest Y Minimum").pack()
+    entry_nest_ymin = Entry(root); entry_nest_ymin.insert(0, "50"); entry_nest_ymin.pack()
 
-Label(root, text="Nest Y Maximum").pack()
-entry_nest_ymax = Entry(root); entry_nest_ymax.insert(0, "200"); entry_nest_ymax.pack()
+    Label(root, text="Nest Y Maximum").pack()
+    entry_nest_ymax = Entry(root); entry_nest_ymax.insert(0, "200"); entry_nest_ymax.pack()
 
-Label(root, text="Buffer X Minimum").pack()
-entry_buffer_xmin = Entry(root); entry_buffer_xmin.insert(0, "80"); entry_buffer_xmin.pack()
+    Label(root, text="Buffer X Minimum").pack()
+    entry_buffer_xmin = Entry(root); entry_buffer_xmin.insert(0, "80"); entry_buffer_xmin.pack()
 
-Label(root, text="Buffer X Maximum").pack()
-entry_buffer_xmax = Entry(root); entry_buffer_xmax.insert(0, "270"); entry_buffer_xmax.pack()
+    Label(root, text="Buffer X Maximum").pack()
+    entry_buffer_xmax = Entry(root); entry_buffer_xmax.insert(0, "270"); entry_buffer_xmax.pack()
 
-Label(root, text="Buffer Y Minimum").pack()
-entry_buffer_ymin = Entry(root); entry_buffer_ymin.insert(0, "30"); entry_buffer_ymin.pack()
+    Label(root, text="Buffer Y Minimum").pack()
+    entry_buffer_ymin = Entry(root); entry_buffer_ymin.insert(0, "30"); entry_buffer_ymin.pack()
 
-Label(root, text="Buffer Y Maximum").pack()
-entry_buffer_ymax = Entry(root); entry_buffer_ymax.insert(0, "220"); entry_buffer_ymax.pack()
+    Label(root, text="Buffer Y Maximum").pack()
+    entry_buffer_ymax = Entry(root); entry_buffer_ymax.insert(0, "220"); entry_buffer_ymax.pack()
 
-Button(root, text="Select Output Folder", command=select_output_folder).pack(pady=10)
-label_output = Label(root, text="No output folder selected", wraplength=700)
-label_output.pack()
+    Button(root, text="Select Output Folder", command=select_output_folder).pack(pady=10)
+    label_output = Label(root, text="No output folder selected", wraplength=700)
+    label_output.pack()
 
-Button(root, text="RUN ANALYSIS", command=start, bg="green", fg="white", width=25, height=2).pack(pady=20)
+    Button(root, text="RUN ANALYSIS", command=start, bg="green", fg="white", width=25, height=2).pack(pady=20)
 
-root.mainloop()
+    root.mainloop()
