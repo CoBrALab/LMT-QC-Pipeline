@@ -537,110 +537,111 @@ def bind_keys(root):
     root.bind("<Left>",  lambda e: previous_sample())
 
 # GUI layout
-root = Tk()
-root.title("LMT QC Validator")
-root.geometry("1600x950")
+if __name__ == "__main__":
+    root = Tk()
+    root.title("LMT QC Validator")
+    root.geometry("1600x950")
 
-bind_keys(root)
+    bind_keys(root)
 
-def _on_close():
-    _release_all_captures()
-    root.destroy()
+    def _on_close():
+        _release_all_captures()
+        root.destroy()
 
-root.protocol("WM_DELETE_WINDOW", _on_close)
+    root.protocol("WM_DELETE_WINDOW", _on_close)
 
-# Top setup bar
-top_frame = Frame(root)
-top_frame.pack(pady=10)
+    # Top setup bar
+    top_frame = Frame(root)
+    top_frame.pack(pady=10)
 
-Button(top_frame, text="Select lmt_qc_sampler_<qc_mode>__A<animal_id>_<timestamp>.sqlite", command=select_database).grid(row=0, column=0, padx=10)
-db_label = Label(top_frame, text="No database selected", wraplength=500)
-db_label.grid(row=0, column=1)
+    Button(top_frame, text="Select lmt_qc_sampler_<qc_mode>__A<animal_id>_<timestamp>.sqlite", command=select_database).grid(row=0, column=0, padx=10)
+    db_label = Label(top_frame, text="No database selected", wraplength=500)
+    db_label.grid(row=0, column=1)
 
-Button(top_frame, text="Select LMT Videos  (for 3-panel view)", command=select_videos).grid(row=1, column=0, padx=10)
-vid_label = Label(top_frame, text="No videos selected  (optional — enables boundary panels)", wraplength=500)
-vid_label.grid(row=1, column=1)
+    Button(top_frame, text="Select LMT Videos  (for 3-panel view)", command=select_videos).grid(row=1, column=0, padx=10)
+    vid_label = Label(top_frame, text="No videos selected  (optional — enables boundary panels)", wraplength=500)
+    vid_label.grid(row=1, column=1)
 
-Button(top_frame, text="Select Screenshot Folder", command=select_folder).grid(row=2, column=0, padx=10)
-folder_label = Label(top_frame, text="No folder selected", wraplength=500)
-folder_label.grid(row=2, column=1)
+    Button(top_frame, text="Select Screenshot Folder", command=select_folder).grid(row=2, column=0, padx=10)
+    folder_label = Label(top_frame, text="No folder selected", wraplength=500)
+    folder_label.grid(row=2, column=1)
 
-Button(top_frame, text="START QC", command=start_qc, bg="green", fg="white", width=20).grid(row=3, column=0, columnspan=2, pady=10)
+    Button(top_frame, text="START QC", command=start_qc, bg="green", fg="white", width=20).grid(row=3, column=0, columnspan=2, pady=10)
 
-# Main area
-main_frame = Frame(root)
-main_frame.pack(fill=BOTH, expand=True)
+    # Main area
+    main_frame = Frame(root)
+    main_frame.pack(fill=BOTH, expand=True)
 
-# Three-panel image area (used for ASSUMED modes when videos are loaded)
-panels_frame = Frame(main_frame, bg="#111")
-# (packed/unpacked dynamically in show_sample)
+    # Three-panel image area (used for ASSUMED modes when videos are loaded)
+    panels_frame = Frame(main_frame, bg="#111")
+    # (packed/unpacked dynamically in show_sample)
 
-lbl_left_title  = Label(panels_frame, text="Before gap",  font=("Arial", 8, "bold"), fg="#aaa", bg="#111")
-lbl_left_title.grid(row=0, column=0, padx=4)
-img_left        = Label(panels_frame, bg="#111")
-img_left.grid(row=1, column=0, padx=4, pady=2)
+    lbl_left_title  = Label(panels_frame, text="Before gap",  font=("Arial", 8, "bold"), fg="#aaa", bg="#111")
+    lbl_left_title.grid(row=0, column=0, padx=4)
+    img_left        = Label(panels_frame, bg="#111")
+    img_left.grid(row=1, column=0, padx=4, pady=2)
 
-lbl_center_title = Label(panels_frame, text="QC frame",   font=("Arial", 8, "bold"), fg="#55ff55", bg="#0d2a0d")
-lbl_center_title.grid(row=0, column=1, padx=4)
-img_center      = Label(panels_frame, bg="#0d2a0d", bd=2, relief=GROOVE)
-img_center.grid(row=1, column=1, padx=4, pady=2)
+    lbl_center_title = Label(panels_frame, text="QC frame",   font=("Arial", 8, "bold"), fg="#55ff55", bg="#0d2a0d")
+    lbl_center_title.grid(row=0, column=1, padx=4)
+    img_center      = Label(panels_frame, bg="#0d2a0d", bd=2, relief=GROOVE)
+    img_center.grid(row=1, column=1, padx=4, pady=2)
 
-lbl_right_title = Label(panels_frame, text="After gap",   font=("Arial", 8, "bold"), fg="#aaa", bg="#111")
-lbl_right_title.grid(row=0, column=2, padx=4)
-img_right       = Label(panels_frame, bg="#111")
-img_right.grid(row=1, column=2, padx=4, pady=2)
+    lbl_right_title = Label(panels_frame, text="After gap",   font=("Arial", 8, "bold"), fg="#aaa", bg="#111")
+    lbl_right_title.grid(row=0, column=2, padx=4)
+    img_right       = Label(panels_frame, bg="#111")
+    img_right.grid(row=1, column=2, padx=4, pady=2)
 
-# Single-panel image area (used for DETECTED mode or when no videos loaded)
-single_frame = Frame(main_frame)
-# (packed/unpacked dynamically in show_sample)
+    # Single-panel image area (used for DETECTED mode or when no videos loaded)
+    single_frame = Frame(main_frame)
+    # (packed/unpacked dynamically in show_sample)
 
-image_label = Label(single_frame)
-image_label.pack()
+    image_label = Label(single_frame)
+    image_label.pack()
 
-right_frame = Frame(main_frame)
-right_frame.pack(side=RIGHT, padx=40, anchor=N)
+    right_frame = Frame(main_frame)
+    right_frame.pack(side=RIGHT, padx=40, anchor=N)
 
-# QC mode banner
-mode_banner = Label(right_frame, text="", font=("Arial", 10, "bold"))
-mode_banner.pack(pady=(4, 0))
+    # QC mode banner
+    mode_banner = Label(right_frame, text="", font=("Arial", 10, "bold"))
+    mode_banner.pack(pady=(4, 0))
 
-sample_text     = Label(right_frame, text="Sample", font=("Arial", 16, "bold"))
-sample_text.pack(pady=10)
+    sample_text     = Label(right_frame, text="Sample", font=("Arial", 16, "bold"))
+    sample_text.pack(pady=10)
 
-video_text      = Label(right_frame, text="Video", font=("Arial", 12))
-video_text.pack(pady=5)
+    video_text      = Label(right_frame, text="Video", font=("Arial", 12))
+    video_text.pack(pady=5)
 
-frame_text      = Label(right_frame, text="Frame", font=("Arial", 12))
-frame_text.pack(pady=5)
+    frame_text      = Label(right_frame, text="Frame", font=("Arial", 12))
+    frame_text.pack(pady=5)
 
-assumption_text = Label(right_frame, text="Row Type", font=("Arial", 12))
-assumption_text.pack(pady=5)
+    assumption_text = Label(right_frame, text="Row Type", font=("Arial", 12))
+    assumption_text.pack(pady=5)
 
-gap_text        = Label(right_frame, text="Gap", font=("Arial", 12))
-gap_text.pack(pady=5)
+    gap_text        = Label(right_frame, text="Gap", font=("Arial", 12))
+    gap_text.pack(pady=5)
 
-prediction_text = Label(right_frame, text="Algorithm", font=("Arial", 12, "bold"))
-prediction_text.pack(pady=10)
+    prediction_text = Label(right_frame, text="Algorithm", font=("Arial", 12, "bold"))
+    prediction_text.pack(pady=10)
 
-manual_text     = Label(right_frame, text="Manual QC", font=("Arial", 12, "bold"))
-manual_text.pack(pady=10)
+    manual_text     = Label(right_frame, text="Manual QC", font=("Arial", 12, "bold"))
+    manual_text.pack(pady=10)
 
-# Action buttons
-Button(right_frame, text="IN NEST  (A)", bg="green", fg="white", width=22, height=2, command=lambda: set_manual_qc(1)).pack(pady=5)
+    # Action buttons
+    Button(right_frame, text="IN NEST  (A)", bg="green", fg="white", width=22, height=2, command=lambda: set_manual_qc(1)).pack(pady=5)
 
-Button(right_frame, text="OUT OF NEST  (D)", bg="red", fg="white", width=22, height=2, command=lambda: set_manual_qc(0)).pack(pady=5)
+    Button(right_frame, text="OUT OF NEST  (D)", bg="red", fg="white", width=22, height=2, command=lambda: set_manual_qc(0)).pack(pady=5)
 
-Label(right_frame, text="", font=("Arial", 6)).pack()
+    Label(right_frame, text="", font=("Arial", 6)).pack()
 
-Button(right_frame, text="\u25c4  PREVIOUS  (\u2190)", width=22, command=previous_sample).pack(pady=5)
-Button(right_frame, text="NEXT  (\u2192)  \u25ba", width=22, command=next_sample).pack(pady=5)
+    Button(right_frame, text="\u25c4  PREVIOUS  (\u2190)", width=22, command=previous_sample).pack(pady=5)
+    Button(right_frame, text="NEXT  (\u2192)  \u25ba", width=22, command=next_sample).pack(pady=5)
 
-Label(right_frame,
-      text=("\nKeyboard shortcuts:\n"
-            "A = IN NEST  (auto-advances)\n"
-            "D = OUT OF NEST  (auto-advances)\n"
-            "\u2190 = Previous\n"
-            "\u2192 = Next (without labelling)"),
-      font=("Arial", 10), fg="gray", justify=CENTER).pack(pady=15)
+    Label(right_frame,
+        text=("\nKeyboard shortcuts:\n"
+                "A = IN NEST  (auto-advances)\n"
+                "D = OUT OF NEST  (auto-advances)\n"
+                "\u2190 = Previous\n"
+                "\u2192 = Next (without labelling)"),
+        font=("Arial", 10), fg="gray", justify=CENTER).pack(pady=15)
 
-root.mainloop()
+    root.mainloop()
