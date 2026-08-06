@@ -792,3 +792,36 @@ Each script also keeps its own thin, script-specific wrapper around this module'
 - **Configuration files / environment variables**: none; all constants are hardcoded module-level values, unchanged from their original per-script definitions.
 - **Expected directory structure**: none — this module has no file I/O of its own beyond frame extraction to a caller-supplied path.
 - **Platform assumptions**: same as any importing script — depends on a working OpenCV video backend; not headless-relevant on its own since this module has no GUI code.
+
+---
+## Testing (tests/)
+
+### Overview
+
+The correctness-critical pure logic in this pipeline (gap-type classification, binary-search task generation, integrity accounting, frame resolution, and the gap-fill ROI/vectorization core) has an automated pytest suite covering it, independent of the Tkinter GUIs and real video/database files. This exists so a regression in that logic (e.g. the kind of silent defaulting bug fixed elsewhere in this pipeline's history) surfaces as a fast, deterministic test failure instead of only being catchable by manually reviewing GUI output against real data.
+
+### How to Run
+```bash
+uv run pytest tests/ -v
+```
+No video files, SQLite databases, or GUI interaction are required, the suite runs fully headless.
+
+### What's Covered
+- 2.lmt_binary_search.py: classify_gap_type, _check, build_initial_tasks, find_nearest_frame_candidates (via lmt_common.py)
+- 1.lmt_gap_fill.py: the gap-expansion and ROI-membership vectorization core
+  
+### Key Design Decisions & Assumptions
+- Scripts are loaded by file path, not imported normally. The pipeline's numerically-prefixed filenames (1.lmt_gap_fill.py, etc.) aren't valid Python module names, so tests/conftest.py loads them via importlib.util.spec_from_file_location rather than a standard import statement.
+- The repo root is added to sys.path for the duration of the test session. A script loaded this way still needs its own top-level imports (e.g. 2.lmt_binary_search.py's from lmt_common import ...) to resolve; python script.py gets this for free by putting the script's own directory on sys.path automatically, but importlib-based loading does not, so conftest.py does it explicitly.
+- 1.lmt_gap_fill.py, 3.lmt_qc_sampler.py, and 4.lmt_qc_validator.py guard their GUI bootstrap behind if __name__ == "__main__":. This is required for these files to be importable at all without opening a live Tkinter window; 2.lmt_binary_search.py already followed this pattern. Interactive behavior (uv run python <script>.py) is unchanged by this guard.
+- The gap-fill vectorization test re-implements the core ROI/gap-expansion logic inline (tests/test_gap_fill_logic.py's _run_core_logic helper) rather than calling run_analysis() directly, since that function also performs DB I/O and GUI dialog calls not relevant to the logic under test.
+
+### Do NOT Modify
+- tests/conftest.py's sys.path insertion: removing it will reintroduce ModuleNotFoundError: lmt_common for any test that loads 2.lmt_binary_search.py.
+- The __main__ guards added to 1.lmt_gap_fill.py, 3.lmt_qc_sampler.py, and 4.lmt_qc_validator.py, removing them breaks headless test loading for those scripts (and, for any future test added against them, would open a GUI window during pytest collection).
+  
+### Open Source Notes
+- External dependencies: pytest>=8.0.0 (dev dependency only, not required to run the pipeline itself).
+- Standard library: importlib.util, pathlib, sys.
+- Configuration files: pyproject.toml's [dependency-groups] dev section.
+- Platform assumptions: none beyond what the pipeline scripts themselves require. The suite is fully headless and does not depend on a display server, video codec support, or a live SQLite file.
