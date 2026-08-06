@@ -341,50 +341,50 @@ def start():
     except Exception as e:
         messagebox.showerror("Error", str(e))
 
+if __name__ == "__main__":
+    root = Tk()
+    root.title("LMT Random QC Sampler")
+    root.geometry("750x520")
 
-root = Tk()
-root.title("LMT Random QC Sampler")
-root.geometry("750x520")
+    Label(root, text="LMT Random QC Sampler",
+        font=("Arial", 16, "bold")).pack(pady=10)
 
-Label(root, text="LMT Random QC Sampler",
-      font=("Arial", 16, "bold")).pack(pady=10)
+    Label(root,
+        text=("Randomly selects frames from the lmt_binary_search__A<animal_id>_<timestamp>.sqlite\n"
+            "and extracts their screenshots for manual quality control.\n\n"
+            "Select QC pool(s). Each type produces its own SQLite\n"
+            "and screenshot folder, labelled with the type and a shared timestamp."),
+        font=("Arial", 10), justify=CENTER).pack(pady=5)
 
-Label(root,
-      text=("Randomly selects frames from the lmt_binary_search__A<animal_id>_<timestamp>.sqlite\n"
-          "and extracts their screenshots for manual quality control.\n\n"
-          "Select QC pool(s). Each type produces its own SQLite\n"
-          "and screenshot folder, labelled with the type and a shared timestamp."),
-      font=("Arial", 10), justify=CENTER).pack(pady=5)
+    Button(root, text="Select lmt_binary_search__A<animal_id>_<timestamp>.sqlite", command=select_db).pack(pady=5)
+    label_db = Label(root, text="No file selected", wraplength=700)
+    label_db.pack()
 
-Button(root, text="Select lmt_binary_search__A<animal_id>_<timestamp>.sqlite", command=select_db).pack(pady=5)
-label_db = Label(root, text="No file selected", wraplength=700)
-label_db.pack()
+    Button(root, text="Select LMT Videos", command=select_videos).pack(pady=5)
+    label_vid = Label(root, text="No videos selected")
+    label_vid.pack()
 
-Button(root, text="Select LMT Videos", command=select_videos).pack(pady=5)
-label_vid = Label(root, text="No videos selected")
-label_vid.pack()
+    Button(root, text="Select Output Folder", command=select_out).pack(pady=5)
+    label_out = Label(root, text="No output folder selected", wraplength=700)
+    label_out.pack()
 
-Button(root, text="Select Output Folder", command=select_out).pack(pady=5)
-label_out = Label(root, text="No output folder selected", wraplength=700)
-label_out.pack()
+    Label(root, text="How many samples would you like? (applied per pool)").pack(pady=(15, 2))
+    entry_samples = Entry(root)
+    entry_samples.insert(0, "100")
+    entry_samples.pack()
 
-Label(root, text="How many samples would you like? (applied per pool)").pack(pady=(15, 2))
-entry_samples = Entry(root)
-entry_samples.insert(0, "100")
-entry_samples.pack()
+    Label(root, text="Select QC pool(s):", font=("Arial", 11, "bold")).pack(pady=(14, 2))
+    pool_frame = Frame(root)
+    pool_frame.pack()
 
-Label(root, text="Select QC pool(s):", font=("Arial", 11, "bold")).pack(pady=(14, 2))
-pool_frame = Frame(root)
-pool_frame.pack()
+    var_detected = BooleanVar(value=True)
+    var_binary   = BooleanVar(value=True)
+    var_logic    = BooleanVar(value=True)
 
-var_detected = BooleanVar(value=True)
-var_binary   = BooleanVar(value=True)
-var_logic    = BooleanVar(value=True)
+    Checkbutton(pool_frame, text="DETECTED rows", variable=var_detected, font=("Arial", 10)).grid(row=0, column=0, padx=15)
+    Checkbutton(pool_frame, text="BINARY_SEARCH rows", variable=var_binary, font=("Arial", 10)).grid(row=0, column=1, padx=15)
+    Checkbutton(pool_frame, text="LOGIC rows", variable=var_logic, font=("Arial", 10)).grid(row=0, column=2, padx=15)
 
-Checkbutton(pool_frame, text="DETECTED rows", variable=var_detected, font=("Arial", 10)).grid(row=0, column=0, padx=15)
-Checkbutton(pool_frame, text="BINARY_SEARCH rows", variable=var_binary, font=("Arial", 10)).grid(row=0, column=1, padx=15)
-Checkbutton(pool_frame, text="LOGIC rows", variable=var_logic, font=("Arial", 10)).grid(row=0, column=2, padx=15)
+    Button(root, text="RUN SAMPLING", command=start, bg="green", fg="white", width=30, height=2).pack(pady=20)
 
-Button(root, text="RUN SAMPLING", command=start, bg="green", fg="white", width=30, height=2).pack(pady=20)
-
-root.mainloop()
+    root.mainloop()
