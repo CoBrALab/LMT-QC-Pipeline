@@ -198,14 +198,34 @@ def process_database(input_db, output_folder):
 
         vacuum_start = time.time()
 
-        cur.execute("VACUUM")
+        # Use VACUUM INTO rather than an in-place VACUUM. In-place VACUUM
+        # builds its rebuild scratch file in SQLite's default temp location
+        # (typically the system temp directory, e.g. /var/tmp), which can be
+        # on a much smaller partition than output_folder and can fail with
+        # "database or disk is full" on large databases even when the output
+        # location has plenty of space. VACUUM INTO writes the compacted
+        # copy directly alongside output_db, then we atomically swap it in.
+        # The DELETE above has already committed, so output_db remains a
+        # valid (if uncompacted) result if this step fails.
+        vacuum_tmp = output_db + ".vacuum"
+        if os.path.exists(vacuum_tmp):
+            os.remove(vacuum_tmp)
 
-        conn.commit()
+        try:
+            cur.execute("VACUUM INTO ?", (vacuum_tmp,))
+            conn.close()
+            conn = None
+            os.replace(vacuum_tmp, output_db)
+        except Exception as vacuum_error:
+            if os.path.exists(vacuum_tmp):
+                os.remove(vacuum_tmp)
+            raise Exception(
+                f"VACUUM failed, but the deleted-row output was already "
+                f"saved successfully (uncompacted) at:\n{output_db}\n\n"
+                f"Original error: {vacuum_error}"
+            ) from vacuum_error
 
         vacuum_time = time.time() - vacuum_start
-
-        conn.close()
-        conn = None
 
         total = time.time() - start
 
