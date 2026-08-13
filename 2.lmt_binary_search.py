@@ -899,6 +899,7 @@ class BinarySearchGUI:
         task = self.current_task
         if task is None:
             return
+        self.current_task = None
 
         snapshot = copy.deepcopy(self.decisions)
         self.history.append((task, snapshot))
