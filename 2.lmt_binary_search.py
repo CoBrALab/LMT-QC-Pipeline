@@ -1001,11 +1001,13 @@ class BinarySearchGUI:
             self.task_stack   = [t for t in self.task_stack if t is not redo_task]
             self._refresh_display(redo_task,
                 answer_text="Redone", answer_color="#555555")
-        else:
-            if self.task_stack:
-                if self.current_task is not None:
-                    self.history.append((self.current_task, copy.deepcopy(self.decisions)))
-                self._load_next_task()
+        # If there is nothing to redo, do nothing. The current task is
+        # still pending and has not been answered -- advancing past it here
+        # discarded it without ever writing its frame range to
+        # self.decisions or re-queuing it in self.task_stack, permanently
+        # orphaning those frames. There is no legitimate "skip without
+        # deciding" action in this workflow; the task must be answered or
+        # undone.
 
     #  Window close cleanup 
     def _on_close(self):
