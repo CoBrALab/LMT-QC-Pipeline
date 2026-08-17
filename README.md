@@ -366,8 +366,11 @@ immediately after it, every gap is labeled with one of four types:
 - **`00`** (out → out): no directional information is available from the
   endpoints alone, the animal could have stayed out the whole time, or
   briefly entered and left again, and there is no way to tell from the
-  boundary states. These gaps are **skipped** (left `-1`) rather than
-  guessed.
+  boundary states, so **binary search cannot be used** (there's no known
+  transition to bisect toward). Above `MIN_GAP_DURATION_FOR_BINARY_SEARCH`,
+  these gaps are instead reviewed via left-to-right **checkpoint
+  sampling** (see step 4) rather than left unresolved; at or below the
+  threshold, they're still **skipped** (left `-1`), same as before.
 - **`11`** (in → in): under normal conditions, script 1's logic-fill rule
   should already have resolved these to `IN_NEST = 1`. If a `-1` frame is
   still found in a type-11 gap here, it is treated as an expected but
@@ -377,14 +380,30 @@ immediately after it, every gap is labeled with one of four types:
   matter, the animal's state is known to differ between the two
   endpoints, so **exactly one transition occurred somewhere inside the
   gap**. These are the only gap types eligible for binary search.
+  (Type-00 gaps are eligible for a different review mechanism — see
+  step 4)
 
-**3. Filter by duration.** Among `01`/`10` gaps, any shorter than
+**3. Filter by duration.** Among `01`/`10` gaps (and, since checkpoint
+review was added, `00` gaps as well), any shorter than
 `MIN_GAP_DURATION_FOR_BINARY_SEARCH` (default 30 seconds) are left `-1`
 rather than queued for review, a gap this short contributes little to the
 overall time-in-nest estimate relative to the reviewer time it would cost
 to resolve precisely.
 
-**4. Binary search the remaining gaps.** This is the core algorithm, and it
+**4. Checkpoint-review the remaining `00` gaps.** Since there's no known
+transition to bisect toward, type-00 gaps aren't handled by binary search
+at all. Instead, above-threshold `00` gaps are sampled left-to-right at
+`TYPE00_REVIEW_INTERVAL_SECONDS` (default 60 seconds): starting from the
+gap's left edge, the reviewer is shown a frame every interval and asked
+whether the animal is in the nest, and each answer fills backward to the
+previous checkpoint (or the gap's start, for the first one). The final
+checkpoint always lands exactly on the gap's right edge regardless of
+interval alignment, so that edge is always explicitly reviewed rather than
+extrapolated. A gap shorter than one interval gets a single checkpoint
+covering the whole gap. Unlike binary search, this is a flat, precomputed
+sequence (no recursive subdivision).
+
+**5. Binary search the remaining gaps.** This is the core algorithm, and it
 relies on one key assumption: **within a `01` or `10` gap, the animal's
 in-nest state is monotonic**, it changes exactly once, at some unknown
 frame, from the state at the gap's start to the (different) state at the
@@ -426,7 +445,7 @@ In both directions the reviewer is answering the same underlying question,
 immediately and which half continues to be searched is flipped, because
 which endpoint state is "known" differs between an entry and an exit.
 
-**5. Convergence and termination.** Recursion on a gap's subtasks
+**6. Convergence and termination.** Recursion on a gap's subtasks
 terminates in one of two ways:
 
 - The segment being searched shrinks to zero width (`seg_start > seg_end`),
@@ -442,14 +461,14 @@ terminates in one of two ways:
   for this pipeline's purposes, so this trades a small amount of possible
   imprecision for a large reduction in reviewer clicks.
 
-**6. Determine the final gap classification.** Once every subtask for
+**7. Determine the final gap classification.** Once every subtask for
 every gap has been answered, all resulting frame decisions are merged with
 the unchanged `DETECTED` frame states (built with vectorized NumPy
 operations rather than a per-row loop) into the authoritative final
 `IN_NEST` value for every frame, along with `BINARY_SEARCH` and
 `FILL_SOURCE` bookkeeping.
 
-**7. Write outputs and report.** The final table is written to a new
+**8. Write outputs and report.** The final table is written to a new
 SQLite file, and a detailed summary report is generated with multiple
 internal balance checks (e.g. that every accounted-for frame category sums
 back to the original total), if any check fails, an `IntegrityError` is
@@ -461,8 +480,11 @@ inconsistencies.
   are assumed to contain exactly one transition.**
   This monotonicity assumption is what makes "ask about the midpoint, then
   recurse on one half" valid, it would not be valid for `00` gaps (no
-  known transition at all) which is exactly why those cases are filtered
-  out *before* the search begins rather than handled by it. 
+  known transition at all) which is exactly why those gaps are never
+  binary-searched. Above-threshold `00` gaps are instead handled by a
+  separate checkpoint-sampling mechanism that doesn't assume monotonicity
+  (see step 4); at or below the duration threshold, they're still
+  filtered out before any review begins.
 - **Nearest-frame video resolution, not backward-only or exact-only.**
   When a requested global frame doesn't map exactly onto any loaded video's
   coverage, the script resolves to the nearer of the closest preceding or
@@ -489,7 +511,8 @@ inconsistencies.
   breaks video-to-frame mapping.
 - `BINARY_SEARCH = 1` must be set only for frames in gaps that were
   actually routed to the reviewer (i.e. `01`/`10` gaps above the duration
-  threshold), `4.lmt_qc_validator.py` relies on this distinction.
+  threshold, and `00` gaps above the same threshold via checkpoint
+  review), `4.lmt_qc_validator.py` relies on this distinction.
 - Table name `GAP_FILL_ANALYSIS` and the `BINARY_SEARCH`/`FILL_SOURCE`
   columns are read by name in `3.lmt_qc_sampler.py` and
   `4.lmt_qc_validator.py`.
@@ -500,9 +523,9 @@ inconsistencies.
 - **Standard library**: `os`, `re`, `copy`, `sqlite3`, `datetime`, `time`.
 - **Configuration files / environment variables**: none; all thresholds
   (`MIN_GAP_DURATION_FOR_BINARY_SEARCH = 30s`,
-  `FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES = 1 min`, `DB_FPS`,
-  `FRAME_CONVERSION`, `FPS_TOLERANCE = 0.5`) are hardcoded module-level
-  constants.
+  `FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES = 1 min`,
+  `TYPE00_REVIEW_INTERVAL_SECONDS = 60s`, `DB_FPS`, `FRAME_CONVERSION`,
+  `FPS_TOLERANCE = 0.5`) are hardcoded module-level constants.
 - **Expected directory structure**: none required beyond a writable output
   folder (`_binsearch_tmp` is created automatically and cleaned up
   automatically, including on early window close).
