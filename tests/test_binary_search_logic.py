@@ -51,17 +51,21 @@ def _make_df_all(detected_rows, assumed_rows):
 
 def test_build_initial_tasks_type_00_is_skipped_not_queued(binary_search_module):
     m = binary_search_module
-    # Gap 100-200, both boundaries out-of-nest (type 00), duration well
-    # above the search threshold — should still be skipped, not searched.
+    # Gap 100-200, both boundaries out-of-nest (type 00). Below the
+    # duration threshold — should be skipped, not queued for checkpoint
+    # review (a longer type-00 gap would be reviewed instead, see
+    # test_build_initial_tasks_type00_above_threshold_is_reviewed in
+    # test_type00_gap_review.py).
     df_all = _make_df_all(
         detected_rows=[(100, 0), (200, 0)],
         assumed_rows=[(150, -1, 100, 200)],
     )
     df_neg = df_all[df_all["IN_NEST"] == -1]
-    tasks, skipped, skipped_gaps, gtype_map, zz, oo = m.build_initial_tasks(df_neg, df_all)
+    tasks, skipped, skipped_gaps, gtype_map, zz_reviewed, zz_skipped, oo = m.build_initial_tasks(df_neg, df_all)
     assert tasks == []
     assert 150 in skipped
-    assert (100, 200) in zz
+    assert (100, 200) in zz_skipped
+    assert (100, 200) not in zz_reviewed
     assert gtype_map[(100, 200)] == m.GAP_TYPE_00
 
 
@@ -74,7 +78,7 @@ def test_build_initial_tasks_short_gap_skipped_by_threshold(binary_search_module
         assumed_rows=[(f, -1, 1000, 1030) for f in range(1001, 1030)],
     )
     df_neg = df_all[df_all["IN_NEST"] == -1]
-    tasks, skipped, skipped_gaps, gtype_map, zz, oo = m.build_initial_tasks(df_neg, df_all)
+    tasks, skipped, skipped_gaps, gtype_map, zz_reviewed, zz_skipped, oo = m.build_initial_tasks(df_neg, df_all)
     assert tasks == []
     assert (1000, 1030) in skipped_gaps
     assert gtype_map[(1000, 1030)] == m.GAP_TYPE_10
@@ -90,7 +94,7 @@ def test_build_initial_tasks_type_10_above_threshold_is_queued(binary_search_mod
         assumed_rows=[(f, -1, gs, ge) for f in range(gs + 1, ge)],
     )
     df_neg = df_all[df_all["IN_NEST"] == -1]
-    tasks, skipped, skipped_gaps, gtype_map, zz, oo = m.build_initial_tasks(df_neg, df_all)
+    tasks, skipped, skipped_gaps, gtype_map, zz_reviewed, zz_skipped, oo = m.build_initial_tasks(df_neg, df_all)
     assert len(tasks) == 1
     task = tasks[0]
     assert task["gap_type"] == m.GAP_TYPE_10
