@@ -39,7 +39,7 @@ You do not need to create a virtualenv or `pip install` anything by hand.
 ```bash
 uv sync
 ```
-This provisions Python 3.11 (pinned in `.python-version`) and installs the
+This provisions Python 3.12 (pinned in `.python-version`) and installs the
 exact dependency versions pinned in `uv.lock` (numpy, pandas, opencv-python,
 Pillow) into a local `.venv/`.
 
