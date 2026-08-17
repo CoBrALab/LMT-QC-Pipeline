@@ -1,5 +1,5 @@
 """
-Tests for Gap Type 00 (Issue #19) checkpoint review.
+Tests for Gap Type 00 (Git Issue #19) checkpoint review.
 
 Covers:
   - _build_type00_checkpoint_tasks: checkpoint positions, fill-left segment
@@ -14,8 +14,6 @@ Covers:
     <= 1 min) and via the branch itself for longer segments.
   - Skip and undo/redo continue to work correctly against type-00
     checkpoint tasks, with no gap-type-specific changes required in either.
-  - Fix 6 (unrecognized gap_type still raises IntegrityError) is
-    unaffected by GAP_TYPE_00 becoming a recognized type.
   - A normal Type 10 answer is unaffected (regression check).
 
 Uses the `binary_search_module` fixture from tests/conftest.py, which
@@ -26,11 +24,7 @@ already guarded behind `if __name__ == "__main__":`.
 import pandas as pd
 import pytest
 
-
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
-
 def _make_task(gap_index, seg_start, seg_end, gap_type):
     """A minimal task dict, matching the shape build_initial_tasks/
     _build_type00_checkpoint_tasks produce."""
@@ -43,7 +37,6 @@ def _make_task(gap_index, seg_start, seg_end, gap_type):
         "gap_type": gap_type,
     }
 
-
 def _make_df_all(detected_rows, assumed_rows):
     """detected_rows: list of (frame, in_nest).
     assumed_rows: list of (frame, in_nest, gap_start, gap_end)."""
@@ -55,7 +48,6 @@ def _make_df_all(detected_rows, assumed_rows):
         records.append({"FRAMENUMBER": f, "IN_NEST": v, "ASSUMPTION_TYPE": "ASSUMED",
                          "GAP_START_FRAME": gs, "GAP_END_FRAME": ge})
     return pd.DataFrame.from_records(records)
-
 
 class _FakeRoot:
     """Stand-in for the Tk root, sufficient for _load_next_task/
@@ -78,7 +70,6 @@ class _FakeRoot:
     def quit(self):
         pass
 
-
 def _new_gui(m):
     """Build a bare BinarySearchGUI instance without invoking __init__
     (which builds the full setup screen). _refresh_display and _finish
@@ -100,11 +91,7 @@ def _new_gui(m):
     gui._finish = lambda: None
     return gui
 
-
-# ---------------------------------------------------------------------------
 # _build_type00_checkpoint_tasks
-# ---------------------------------------------------------------------------
-
 def test_checkpoint_positions_and_fill_left_segments(binary_search_module):
     m = binary_search_module
     # gap_start=1001, gap_end=6551 (5551 frames), interval=60s=1800 frames
@@ -117,7 +104,6 @@ def test_checkpoint_positions_and_fill_left_segments(binary_search_module):
     assert all(t["gap_type"] == m.GAP_TYPE_00 for t in tasks)
     assert all(t["show_frame"] == t["seg_end"] for t in tasks)
 
-
 def test_checkpoints_cover_gap_exactly_no_gaps_no_overlap(binary_search_module):
     m = binary_search_module
     tasks = m._build_type00_checkpoint_tasks(
@@ -128,13 +114,11 @@ def test_checkpoints_cover_gap_exactly_no_gaps_no_overlap(binary_search_module):
     assert all(tasks[i]["seg_end"] + 1 == tasks[i + 1]["seg_start"]
                for i in range(len(tasks) - 1))
 
-
 def test_final_checkpoint_always_forced_to_gap_end(binary_search_module):
     m = binary_search_module
     tasks = m._build_type00_checkpoint_tasks(
         gs=1000, ge=6552, b_left=1000, b_right=6552, gap_idx=1, total_gaps=1)
     assert tasks[-1]["seg_end"] == 6551  # gap_end, regardless of interval alignment
-
 
 def test_gap_shorter_than_interval_gets_a_single_checkpoint(binary_search_module):
     m = binary_search_module
@@ -145,7 +129,6 @@ def test_gap_shorter_than_interval_gets_a_single_checkpoint(binary_search_module
     assert tasks[0]["seg_start"] == 1001
     assert tasks[0]["seg_end"] == 2050
 
-
 def test_checkpoints_share_gap_level_boundary_frames(binary_search_module):
     m = binary_search_module
     # boundary_left/boundary_right are the flanking DETECTED frame numbers
@@ -154,11 +137,7 @@ def test_checkpoints_share_gap_level_boundary_frames(binary_search_module):
         gs=1000, ge=6552, b_left=1000, b_right=6552, gap_idx=1, total_gaps=1)
     assert all(t["boundary_left"] == 1000 and t["boundary_right"] == 6552 for t in tasks)
 
-
-# ---------------------------------------------------------------------------
 # build_initial_tasks: threshold routing
-# ---------------------------------------------------------------------------
-
 def test_build_initial_tasks_type00_below_threshold_is_skipped(binary_search_module):
     m = binary_search_module
     # 20-second gap: below MIN_GAP_DURATION_FOR_BINARY_SEARCH (30s).
@@ -174,7 +153,6 @@ def test_build_initial_tasks_type00_below_threshold_is_skipped(binary_search_mod
     assert (1000, 1600) in zz_skipped
     assert (1000, 1600) not in zz_reviewed
     assert all(f in skipped for f in range(1001, 1600))
-
 
 def test_build_initial_tasks_type00_above_threshold_is_reviewed(binary_search_module):
     m = binary_search_module
@@ -193,11 +171,7 @@ def test_build_initial_tasks_type00_above_threshold_is_reviewed(binary_search_mo
     assert all(f not in skipped for f in range(gs + 1, ge))
     assert sum(t["seg_end"] - t["seg_start"] + 1 for t in tasks) == ge - 1 - (gs + 1) + 1
 
-
-# ---------------------------------------------------------------------------
 # _handle_answer: GAP_TYPE_00 branch
-# ---------------------------------------------------------------------------
-
 def test_handle_answer_type00_short_segment_fills_range(binary_search_module):
     """At the default 60s interval, checkpoint segments are <= 1 minute and
     are actually caught by the pre-existing short-segment-fill branch
@@ -214,7 +188,6 @@ def test_handle_answer_type00_short_segment_fills_range(binary_search_module):
 
     assert all(gui.decisions.get(f) == 0 for f in range(2801, 4601))
 
-
 def test_handle_answer_type00_long_segment_reaches_new_branch(binary_search_module):
     """A checkpoint segment longer than the short-segment-fill threshold
     (1 minute) must reach the new elif gtype == GAP_TYPE_00 branch and
@@ -230,11 +203,7 @@ def test_handle_answer_type00_long_segment_reaches_new_branch(binary_search_modu
 
     assert all(gui.decisions.get(f) == 1 for f in range(1, 3601))
 
-
-# ---------------------------------------------------------------------------
 # Skip and undo/redo: no gap-type-specific code required
-# ---------------------------------------------------------------------------
-
 def test_skip_works_on_type00_checkpoint_task(binary_search_module):
     m = binary_search_module
     gui = _new_gui(m)
@@ -247,7 +216,6 @@ def test_skip_works_on_type00_checkpoint_task(binary_search_module):
 
     assert all(gui.decisions.get(f) == -1 for f in range(2801, 4601))
     assert all(f in gui.explicitly_skipped_frames for f in range(2801, 4601))
-
 
 def test_undo_redo_round_trip_across_type00_checkpoints(binary_search_module):
     m = binary_search_module
@@ -270,11 +238,7 @@ def test_undo_redo_round_trip_across_type00_checkpoints(binary_search_module):
 
     assert [id(t) for t in gui.task_stack] == stack_before_undo
 
-
-# ---------------------------------------------------------------------------
 # Regression: Fix 6 and normal Type 10 flow unaffected
-# ---------------------------------------------------------------------------
-
 def test_fix6_still_raises_for_truly_unrecognized_gap_type(binary_search_module):
     m = binary_search_module
     gui = _new_gui(m)
@@ -284,7 +248,6 @@ def test_fix6_still_raises_for_truly_unrecognized_gap_type(binary_search_module)
 
     with pytest.raises(m.IntegrityError):
         m.BinarySearchGUI._handle_answer(gui, in_nest=True)
-
 
 def test_regression_type10_normal_flow_unaffected(binary_search_module):
     m = binary_search_module
