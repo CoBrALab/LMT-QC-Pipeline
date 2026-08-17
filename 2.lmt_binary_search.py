@@ -17,10 +17,15 @@ from PIL import Image, ImageTk
 MIN_GAP_DURATION_FOR_BINARY_SEARCH = 30  # seconds
 FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES = 1 # minutes
 
+# Git Issue #19: for type-00 (OUT->OUT) gaps above MIN_GAP_DURATION_FOR_BINARY_SEARCH,
+# sample left-to-right at this interval and fill each checkpoint's answer
+# backward to the previous checkpoint. Lower = more accuracy, more clicks.
+TYPE00_REVIEW_INTERVAL_SECONDS = 60  # seconds
+
 GAP_TYPE_00 = "00"
 GAP_TYPE_10 = "10"
 GAP_TYPE_01 = "01"
-GAP_TYPE_11 = "11"   
+GAP_TYPE_11 = "11"
 
 # Helpers
 def seconds_to_hms(seconds):
@@ -40,6 +45,51 @@ def _gap_duration_seconds(gap_start_frame, gap_end_frame):
 
 def _seg_dur_min(seg_start, seg_end):
     return (seg_end - seg_start + 1) / DB_FPS / 60
+
+def _build_type00_checkpoint_tasks(gs, ge, b_left, b_right, gap_idx, total_gaps):
+    """
+    Git Issue #19: build the flat, left-to-right sequence of review checkpoint
+    tasks for a single type-00 (OUT->OUT) gap. Sample every
+    TYPE00_REVIEW_INTERVAL_SECONDS starting from the gap's left edge; when
+    a checkpoint is answered, the answer fills every frame from the end of
+    the previous checkpoint (exclusive) through this checkpoint (inclusive)
+    -- i.e. "fill in towards the left". The final checkpoint always lands
+    exactly on gap_end, so the right edge is always explicitly reviewed
+    rather than extrapolated from the last regular interval.
+
+    Precomputed and flat, not synthesized at answer time -- consistent
+    with how type 01/10 tasks are structured, but with no subtask
+    creation in _handle_answer for this type.
+    """
+    gap_start = gs + 1
+    gap_end   = ge - 1
+    interval_frames = TYPE00_REVIEW_INTERVAL_SECONDS * DB_FPS
+
+    checkpoints = []
+    pos = gap_start + interval_frames - 1
+    while pos < gap_end:
+        checkpoints.append(pos)
+        pos += interval_frames
+    checkpoints.append(gap_end)
+
+    tasks = []
+    seg_start = gap_start
+    for checkpoint_frame in checkpoints:
+        tasks.append({
+            "gap_index":      gap_idx,
+            "total_gaps":     total_gaps,
+            "gap_start":      gap_start,
+            "gap_end":        gap_end,
+            "seg_start":      seg_start,
+            "seg_end":        checkpoint_frame,
+            "show_frame":     checkpoint_frame,
+            "boundary_left":  b_left,
+            "boundary_right": b_right,
+            "gap_type":       GAP_TYPE_00,
+        })
+        seg_start = checkpoint_frame + 1
+
+    return tasks
 
 # Video helpers
 def extract_frame_to_path(video_map, global_frame, out_path):
@@ -115,8 +165,9 @@ def build_initial_tasks(df_negative, df_all):
     tasks                = []
     skipped_frames       = set()
     skipped_gap_keys     = set()   # threshold-skipped 01/10 gaps
-    zero_zero_gap_keys   = set()   # type-00 gaps
-    one_one_gap_keys = set()   # type-11 gaps 
+    zero_zero_reviewed_gap_keys = set()   # type-00 gaps routed to checkpoint review
+    zero_zero_skipped_gap_keys  = set()   # type-00 gaps below the duration threshold
+    one_one_gap_keys = set()   # type-11 gaps
     gap_type_map         = {}
 
     for idx, row in enumerate(groups.itertuples(), start=1):
@@ -128,16 +179,26 @@ def build_initial_tasks(df_negative, df_all):
         gtype   = classify_gap_type(gs, ge, in_nest_lookup)
         gap_type_map[(gs, ge)] = gtype
 
-        # Type 00: no directional information → skip
+        # Type 00 (Git Issue #19): above the duration threshold, review via
+        # left-to-right checkpoint sampling; below it, skip exactly as
+        # before (remain IN_NEST = -1).
         if gtype == GAP_TYPE_00:
-            for f in range(gs + 1, ge):
-                skipped_frames.add(f)
-            zero_zero_gap_keys.add((gs, ge))
+            gap_dur_sec = _gap_duration_seconds(gs, ge)
+            if gap_dur_sec <= MIN_GAP_DURATION_FOR_BINARY_SEARCH:
+                for f in range(gs + 1, ge):
+                    skipped_frames.add(f)
+                zero_zero_skipped_gap_keys.add((gs, ge))
+                continue
+            if gs + 1 > ge - 1:
+                zero_zero_skipped_gap_keys.add((gs, ge))
+                continue
+            zero_zero_reviewed_gap_keys.add((gs, ge))
+            tasks.extend(_build_type00_checkpoint_tasks(gs, ge, b_left, b_right, idx, total_gaps))
             continue
-        
-        # Type 11: animal was in-nest on both sides → skip (logic-filled) 
-        # 1.lmt_gap_fill.py should have already marked these frames IN_NEST=1, 
-        # but if any -1 frames appear here they belong to type-11 gaps and are also not binary-searched 
+
+        # Type 11: animal was in-nest on both sides → skip (logic-filled)
+        # 1.lmt_gap_fill.py should have already marked these frames IN_NEST=1,
+        # but if any -1 frames appear here they belong to type-11 gaps and are also not binary-searched
         # (they will default to OUT=0 like other skipped frames, though in practice 1.lmt_gap_fill.py should prevent this).
         if gtype == GAP_TYPE_11:
             for f in range(gs + 1, ge):
@@ -169,9 +230,9 @@ def build_initial_tasks(df_negative, df_all):
             "gap_type":       gtype,
         })
 
-    return (tasks, skipped_frames, skipped_gap_keys, gap_type_map, zero_zero_gap_keys, one_one_gap_keys)
- 
-# Integrity checks 
+    return (tasks, skipped_frames, skipped_gap_keys, gap_type_map, zero_zero_reviewed_gap_keys, zero_zero_skipped_gap_keys, one_one_gap_keys)
+
+# Integrity checks
 class IntegrityError(Exception):
     """Raised when a frame-count integrity check fails."""
 
@@ -181,7 +242,7 @@ def _check(label, expected, actual):
         raise IntegrityError(f"INTEGRITY CHECK FAILED: {label}\n  Expected : {expected:,}\n  Actual   : {actual:,}\n  Delta    : {actual - expected:+,}")
 
 # Build a complete gap_type_map covering ALL assumed gaps
-# (not just those with -1 frames, which is what build_initial_tasks covers). 
+# (not just those with -1 frames, which is what build_initial_tasks covers).
 def build_full_gap_type_map(df_all):
     """
     Classify every gap in df_all (both logic-filled and -1 assumed frames)
@@ -205,8 +266,9 @@ def write_summary_report(report_path, source_db_path,
                          final_clf,            # dict: frame -> final IN_NEST value
                          searchable_frames,    # set: frames routed to binary-search reviewer
                          skipped_gap_keys,     # set: (gs,ge) threshold-skipped 01/10 gaps
-                         zero_zero_gap_keys,   # set: (gs,ge) type-00 gaps
-                         one_one_gap_keys, # set: (gs,ge) type-11 gaps  
+                         zero_zero_reviewed_gap_keys,  # set: (gs,ge) type-00 gaps, checkpoint-reviewed
+                         zero_zero_skipped_gap_keys,   # set: (gs,ge) type-00 gaps, below threshold
+                         one_one_gap_keys, # set: (gs,ge) type-11 gaps
                          gap_type_map,         # partial map from build_initial_tasks
                          total_review_seconds,
                          gap_timings):
@@ -230,7 +292,7 @@ def write_summary_report(report_path, source_db_path,
         dec  = decimal_hours(secs)
         return f"{n_frames:,}", seconds_to_hms(secs), f"{dec:.3f}"
 
-    # 0.  BUILD COMPLETE GAP TYPE MAP    
+    # 0.  BUILD COMPLETE GAP TYPE MAP
     full_gap_type_map = build_full_gap_type_map(df_all)
     # build_initial_tasks classifications take precedence (same values anyway,but kept explicit for auditability).
     merged_gap_type_map = {**full_gap_type_map, **gap_type_map}
@@ -260,7 +322,8 @@ def write_summary_report(report_path, source_db_path,
 
     threshold_skipped = sum(len(range(gs + 1, ge)) for gs, ge in skipped_gap_keys)
 
-    zz_skipped = sum(len(range(gs + 1, ge)) for gs, ge in zero_zero_gap_keys)
+    zz_skipped = sum(len(range(gs + 1, ge)) for gs, ge in zero_zero_skipped_gap_keys)
+    zz_reviewed = sum(len(range(gs + 1, ge)) for gs, ge in zero_zero_reviewed_gap_keys)
 
     ze_skipped = sum(len(range(gs + 1, ge)) for gs, ge in one_one_gap_keys)
 
@@ -311,8 +374,8 @@ def write_summary_report(report_path, source_db_path,
         key   = (gs, ge)
         gtype = merged_gap_type_map[key]   # guaranteed present (checked above)
 
-        if key in zero_zero_gap_keys:
-            return (f"Skipped \u2014 type 00 (no directional info, OUT\u2192OUT)", 0, 0, n_frames)
+        if key in zero_zero_skipped_gap_keys:
+            return (f"Skipped \u2014 type 00, \u2264 {MIN_GAP_DURATION_FOR_BINARY_SEARCH}s (OUT\u2192OUT)", 0, 0, n_frames)
 
         if key in one_one_gap_keys:
             return (f"Skipped \u2014 type 11 (IN\u2192IN, auto-filled by 1.lmt_gap_fill.py)", 0, 0, n_frames)
@@ -355,13 +418,13 @@ def write_summary_report(report_path, source_db_path,
         f.write(f"Source database: {source_db_path}\n")
         f.write("\n")
 
-        # Section 0: Timing 
+        # Section 0: Timing
         f.write("=" * 70 + "\n")
         f.write("BINARY SEARCH REVIEW TIMING\n")
         f.write("=" * 70 + "\n\n")
         f.write(f"  Total review duration:   {seconds_to_hms(total_review_seconds)}  ({decimal_hours(total_review_seconds):.3f} h)\n\n")
 
-        # Section 1: Detection Summary 
+        # Section 1: Detection Summary
         f.write("=" * 70 + "\n")
         f.write("LMT DETECTION SUMMARY\n")
         f.write("=" * 70 + "\n\n")
@@ -379,7 +442,7 @@ def write_summary_report(report_path, source_db_path,
         f.write(f"  Frames: {fr}  ({hms})  [{dec} h]\n")
         f.write(f"  % of detected: {pct(det_out, det_total):.1f}%\n\n")
 
-        # Section 2: Assumed Frames 
+        # Section 2: Assumed Frames
         f.write("=" * 70 + "\n")
         f.write("MISSING / ASSUMED FRAMES SUMMARY\n")
         f.write("=" * 70 + "\n\n")
@@ -397,7 +460,7 @@ def write_summary_report(report_path, source_db_path,
         f.write(f"  Frames: {fr}  ({hms})  [{dec} h]\n")
         f.write(f"  % of assumed: {pct(bs_input_total, asm_total):.1f}%\n\n")
 
-        #  Section 3: Gap Type Breakdown (boundary states only) 
+        #  Section 3: Gap Type Breakdown (boundary states only)
         f.write("=" * 70 + "\n")
         f.write("GAP TYPE BREAKDOWN  (boundary state classification)\n")
         f.write("=" * 70 + "\n\n")
@@ -417,7 +480,7 @@ def write_summary_report(report_path, source_db_path,
 
         f.write(f"  Balance check: {type_frames[GAP_TYPE_00]:,} + {type_frames[GAP_TYPE_01]:,} + {type_frames[GAP_TYPE_10]:,} + {type_frames[GAP_TYPE_11]:,} = {type_frames_total:,}  [assumed total: {asm_total:,}]  {'OK' if type_frames_total == asm_total else 'MISMATCH'}\n\n")
 
-        #  Section 4: Processing Breakdown (method, not boundary state) 
+        #  Section 4: Processing Breakdown (method, not boundary state)
         f.write("=" * 70 + "\n")
         f.write("PROCESSING BREAKDOWN  (how assumed frames were handled)\n")
         f.write("=" * 70 + "\n\n")
@@ -430,7 +493,7 @@ def write_summary_report(report_path, source_db_path,
         f.write(f"    % of assumed:  {pct(logic_filled, asm_total):.1f}%\n\n")
 
         fr, hms, dec = fmt_triple(len(searchable_frames))
-        f.write(f"  Binary-search reviewed  (01/10 gaps above {MIN_GAP_DURATION_FOR_BINARY_SEARCH}s threshold)\n")
+        f.write(f"  Binary-search reviewed  (01/10/00 gaps above {MIN_GAP_DURATION_FOR_BINARY_SEARCH}s threshold)\n")
         f.write(f"    Frames:        {fr}  ({hms})  [{dec} h]\n")
         f.write(f"    % of assumed:  {pct(len(searchable_frames), asm_total):.1f}%\n")
 
@@ -448,8 +511,13 @@ def write_summary_report(report_path, source_db_path,
         f.write(f"    Frames:        {fr}  ({hms})  [{dec} h]\n")
         f.write(f"    % of assumed:  {pct(threshold_skipped, asm_total):.1f}%\n\n")
 
+        fr, hms, dec = fmt_triple(zz_reviewed)
+        f.write(f"  Type-00 reviewed  (OUT\u2192OUT, checkpoint sampled every {TYPE00_REVIEW_INTERVAL_SECONDS}s)\n")
+        f.write(f"    Frames:        {fr}  ({hms})  [{dec} h]\n")
+        f.write(f"    % of assumed:  {pct(zz_reviewed, asm_total):.1f}%\n\n")
+
         fr, hms, dec = fmt_triple(zz_skipped)
-        f.write(f"  Type-00 skipped  (OUT\u2192OUT, no directional info, remain IN_NEST = -1)\n")
+        f.write(f"  Type-00 skipped  (\u2264 {MIN_GAP_DURATION_FOR_BINARY_SEARCH}s threshold, remain IN_NEST = -1)\n")
         f.write(f"    Frames:        {fr}  ({hms})  [{dec} h]\n")
         f.write(f"    % of assumed:  {pct(zz_skipped, asm_total):.1f}%\n\n")
 
@@ -459,7 +527,7 @@ def write_summary_report(report_path, source_db_path,
         f.write(f"    Frames:        {fr}  ({hms})  [{dec} h]\n")
         f.write(f"    % of assumed:  {pct(ze_skipped, asm_total):.1f}%\n\n")
 
-        # Section 5: Binary Search Results 
+        # Section 5: Binary Search Results
         f.write("=" * 70 + "\n")
         f.write("BINARY SEARCH RESULTS\n")
         f.write("=" * 70 + "\n\n")
@@ -491,7 +559,7 @@ def write_summary_report(report_path, source_db_path,
         f.write(f"    % of bs input: {pct(threshold_skipped, bs_input_total):.1f}%\n\n")
 
         fr, hms, dec = fmt_triple(zz_skipped)
-        f.write(f"  Remaining IN_NEST = -1 (type-00 gaps, OUT\u2192OUT, no directional info)\n")
+        f.write(f"  Remaining IN_NEST = -1 (type-00 gaps, \u2264 {MIN_GAP_DURATION_FOR_BINARY_SEARCH}s threshold)\n")
         f.write(f"    Frames:        {fr}  ({hms})  [{dec} h]\n")
         f.write(f"    % of bs input: {pct(zz_skipped, bs_input_total):.1f}%\n\n")
 
@@ -504,7 +572,7 @@ def write_summary_report(report_path, source_db_path,
         bs_check = (bs_in_frames + bs_out_frames + bs_unknown + threshold_skipped + zz_skipped + ze_skipped)
         f.write(f"  Balance check: {bs_in_frames:,} IN + {bs_out_frames:,} OUT + {bs_unknown:,} UNK + {threshold_skipped:,} thresh + {zz_skipped:,} type-00 + {ze_skipped:,} type-11 = {bs_check:,}  [input: {bs_input_total:,}]  {'OK' if bs_check == bs_input_total else 'MISMATCH'}\n\n")
 
-        # Section 6: Classification Audit Table 
+        # Section 6: Classification Audit Table
         f.write("=" * 70 + "\n")
         f.write("CLASSIFICATION AUDIT TABLE\n")
         f.write("=" * 70 + "\n\n")
@@ -527,7 +595,7 @@ def write_summary_report(report_path, source_db_path,
         f.write(f"  {'GRAND TOTAL':<{col}} {running:>12,}  {seconds_to_hms(secs):>10}  {decimal_hours(secs):>8.3f}\n")
         f.write(f"\n  Expected total: {total_expected:,}   {'MATCH' if running == total_expected else 'MISMATCH — SEE LOG'}\n\n")
 
-        # Section 7: Time in Nest 
+        # Section 7: Time in Nest
         f.write("=" * 70 + "\n")
         f.write("TIME IN NEST SUMMARY\n")
         f.write("=" * 70 + "\n\n")
@@ -549,7 +617,7 @@ def write_summary_report(report_path, source_db_path,
         f.write(f"  From binary-search resolution\n")
         f.write(f"    Frames:        {fr}  ({hms})  [{dec} h]\n\n")
 
-        # Section 8: Gap Statistics 
+        # Section 8: Gap Statistics
         f.write("=" * 70 + "\n")
         f.write("GAP STATISTICS\n")
         f.write("=" * 70 + "\n\n")
@@ -628,8 +696,9 @@ class BinarySearchGUI:
         self.explicitly_skipped_frames = set()
         self.skipped_frames      = set()
         self.skipped_gap_keys    = set()
-        self.zero_zero_gap_keys  = set()
-        self.one_one_gap_keys = set()   
+        self.zero_zero_reviewed_gap_keys = set()
+        self.zero_zero_skipped_gap_keys  = set()
+        self.one_one_gap_keys = set()
         self.gap_type_map        = {}
 
         self._review_start_time  = None
@@ -649,14 +718,14 @@ class BinarySearchGUI:
 
         self._build_setup_ui()
 
-    # Setup screen 
+    # Setup screen
     def _build_setup_ui(self):
         self.setup_frame = Frame(self.root)
         self.setup_frame.pack(fill=BOTH, expand=True, padx=20, pady=20)
 
         Label(self.setup_frame, text="LMT Binary Search Gap Filler", font=("Arial", 16, "bold")).pack(pady=10)
 
-        Label(self.setup_frame, text=("Fills ASSUMED frames where IN_NEST = -1 using boundary-aware binary search.\n  \u2022 Type 00 (out \u2192 out): skipped, remain IN_NEST = -1\n  \u2022 Type 01 (out \u2192 in): inverse binary search for nest entry\n  \u2022 Type 10 (in \u2192 out): standard binary search for nest exit\n  \u2022 Type 11 (in \u2192 in): skipped, 1.lmt_gap_fill.py should have logic-filled these\n  \u2022 Gaps \u2264 {MIN_GAP_DURATION_FOR_BINARY_SEARCH}s: also skipped\n\nEach gap shows:  LEFT = last detected before gap  |  CENTER = frame under review  |  RIGHT = first detected after gap\n\nKeyboard:  A = IN NEST    D = OUT OF NEST    \u2190 = Undo    \u2192 = Redo"),font=("Arial", 11), justify=LEFT).pack(pady=10)
+        Label(self.setup_frame, text=(f"Fills ASSUMED frames where IN_NEST = -1 using boundary-aware binary search.\n  \u2022 Type 00 (out \u2192 out): checkpoint review every {TYPE00_REVIEW_INTERVAL_SECONDS}s if above {MIN_GAP_DURATION_FOR_BINARY_SEARCH}s, else skipped\n  \u2022 Type 01 (out \u2192 in): inverse binary search for nest entry\n  \u2022 Type 10 (in \u2192 out): standard binary search for nest exit\n  \u2022 Type 11 (in \u2192 in): skipped, 1.lmt_gap_fill.py should have logic-filled these\n  \u2022 Gaps \u2264 {MIN_GAP_DURATION_FOR_BINARY_SEARCH}s: also skipped\n\nEach gap shows:  LEFT = last detected before gap  |  CENTER = frame under review  |  RIGHT = first detected after gap\n\nKeyboard:  A = IN NEST    D = OUT OF NEST    \u2190 = Undo    \u2192 = Redo"),font=("Arial", 11), justify=LEFT).pack(pady=10)
 
         Button(self.setup_frame, text= "Select lmt_gap_fill__A<animal_id>_<timestamp>.sqlite", command=self._select_db).pack(pady=5)
         self.lbl_db = Label(self.setup_frame, text="No database selected", wraplength=1000)
@@ -730,7 +799,7 @@ class BinarySearchGUI:
         os.makedirs(self.temp_dir, exist_ok=True)
 
         try:
-            (tasks, self.skipped_frames, self.skipped_gap_keys, self.gap_type_map, self.zero_zero_gap_keys, self.one_one_gap_keys) = build_initial_tasks(self.df_neg, self.df_all)
+            (tasks, self.skipped_frames, self.skipped_gap_keys, self.gap_type_map, self.zero_zero_reviewed_gap_keys, self.zero_zero_skipped_gap_keys, self.one_one_gap_keys) = build_initial_tasks(self.df_neg, self.df_all)
         except IntegrityError as e:
             messagebox.showerror(
                 "Data Integrity Error",
@@ -748,7 +817,7 @@ class BinarySearchGUI:
         self._gap_timings  = []
 
         if not self.task_stack:
-            messagebox.showinfo("Nothing to search", "All IN_NEST = -1 gaps are either type-00, type-11, or below the duration threshold (\u2264 {MIN_GAP_DURATION_FOR_BINARY_SEARCH}s).\nProceeding directly to output.")
+            messagebox.showinfo("Nothing to search", f"All IN_NEST = -1 gaps are either type-11, or below the duration threshold (\u2264 {MIN_GAP_DURATION_FOR_BINARY_SEARCH}s).\nProceeding directly to output.")
             self._finish()
             return
 
@@ -757,7 +826,7 @@ class BinarySearchGUI:
         self._build_qc_ui()
         self._load_next_task()
 
-    #  QC screen 
+    #  QC screen
     def _build_qc_ui(self):
         self.qc_frame = Frame(self.root)
         self.qc_frame.pack(fill=BOTH, expand=True)
@@ -827,7 +896,7 @@ class BinarySearchGUI:
         self.root.bind("<Left>",  lambda e: self._go_previous())
         self.root.bind("<Right>", lambda e: self._go_next())
 
-    #  Frame loading 
+    #  Frame loading
     def _load_frame_into_label(self, label, frame_number, cache_key):
         frame_path = os.path.join(self.temp_dir, f"frame_{cache_key}.png")
         resolved_frame = extract_frame_to_path(self.video_map, frame_number, frame_path)
@@ -848,7 +917,7 @@ class BinarySearchGUI:
             return f"Frame {requested_frame}"
         return f"Frame {resolved_frame}  (nearest available \u2014 requested {requested_frame})"
 
-    #  Display 
+    #  Display
     def _refresh_display(self, task, answer_text="", answer_color="black"):
         gap_start_inner = task["gap_start"]
         gap_end_inner   = task["gap_end"]
@@ -857,7 +926,7 @@ class BinarySearchGUI:
         same_gap_ahead  = sum(1 for t in self.task_stack if t["gap_index"] == task["gap_index"])
 
         gtype = task.get("gap_type", "??")
-        gtype_labels = {GAP_TYPE_10: "Type 10  (in-nest \u2192 out-of-nest)  |  searching for exit", GAP_TYPE_01: "Type 01  (out-of-nest \u2192 in-nest)  |  searching for entry",}
+        gtype_labels = {GAP_TYPE_00: "Type 00  (out-of-nest \u2192 out-of-nest)  |  checkpoint review", GAP_TYPE_10: "Type 10  (in-nest \u2192 out-of-nest)  |  searching for exit", GAP_TYPE_01: "Type 01  (out-of-nest \u2192 in-nest)  |  searching for entry",}
         gtype_str = gtype_labels.get(gtype, f"Type {gtype}")
 
         self.lbl_gap_counter.config(text=f"Gap  {task['gap_index']}  /  {task['total_gaps']}")
@@ -880,7 +949,7 @@ class BinarySearchGUI:
         resolved_right = self._load_frame_into_label(self.img_right, b_right, f"br_{b_right}")
         self.lbl_right_frame_num.config(text=self._frame_label_text(b_right, resolved_right))
 
-    #  Task loading 
+    #  Task loading
     def _load_next_task(self):
         if not self.task_stack:
             self._finish()
@@ -914,7 +983,7 @@ class BinarySearchGUI:
         if token == self._advance_token:
             self._load_next_task()
 
-    #  Answer handler 
+    #  Answer handler
     def _handle_answer(self, in_nest: bool):
         task = self.current_task
         if task is None:
@@ -952,7 +1021,7 @@ class BinarySearchGUI:
                 "gap_type":       gtype,
             }
 
-        #  Short segment: fill entirely 
+        #  Short segment: fill entirely
         if seg_duration_minutes <= FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES:
             fill_value = 1 if in_nest else 0
             for f in range(seg_start, seg_end + 1):
@@ -963,7 +1032,7 @@ class BinarySearchGUI:
             self.root.after(300, lambda t=token: self._deferred_advance(t))
             return
 
-        #  Type 10: in-nest → out-of-nest 
+        #  Type 10: in-nest → out-of-nest
         if gtype == GAP_TYPE_10:
             if in_nest:
                 for f in range(seg_start, mid + 1):
@@ -982,7 +1051,7 @@ class BinarySearchGUI:
                 self._refresh_display(task, answer_text="OUT OF NEST — searching left half", answer_color="red")
             self.root.after(300, lambda t=token: self._deferred_advance(t))
 
-        #  Type 01: out-of-nest → in-nest 
+        #  Type 01: out-of-nest → in-nest
         elif gtype == GAP_TYPE_01:
             if in_nest:
                 for f in range(mid, seg_end + 1):
@@ -1001,24 +1070,35 @@ class BinarySearchGUI:
                 self._refresh_display(task, answer_text="OUT OF NEST — searching right half", answer_color="red")
             self.root.after(300, lambda t=token: self._deferred_advance(t))
 
+        #  Type 00: OUT-of-nest -> OUT-of-nest (Issue #19 checkpoint review)
+        elif gtype == GAP_TYPE_00:
+            fill_value = 1 if in_nest else 0
+            for f in range(seg_start, seg_end + 1):
+                self.decisions[f] = fill_value
+            label = "IN NEST" if in_nest else "OUT OF NEST"
+            color = "green"   if in_nest else "red"
+            self._refresh_display(task, answer_text=f"{label} — filled toward left", answer_color=color)
+            self.root.after(300, lambda t=token: self._deferred_advance(t))
+
         else:
             # Fix 6: every task reaching _handle_answer should have
-            # gap_type GAP_TYPE_10 or GAP_TYPE_01 -- build_initial_tasks
-            # never queues type-00/type-11 gaps, and _make_subtask always
-            # copies gap_type unchanged from its parent. An unrecognized
-            # gap_type here means task/decision bookkeeping has gone wrong
-            # somewhere upstream. Previously this branch did nothing: no
-            # decision was written, no subtask was pushed, and no advance
-            # was scheduled -- the review would silently freeze on this
-            # frame with no error, and the frames in it would eventually
-            # surface as the same "unresolved" integrity failure at
-            # _finish(), with no indication of why. Fail loudly here
-            # instead, at the moment the inconsistency is discovered.
+            # gap_type GAP_TYPE_10, GAP_TYPE_01, or GAP_TYPE_00 --
+            # build_initial_tasks never queues type-11 gaps, and
+            # _make_subtask always copies gap_type unchanged from its
+            # parent. An unrecognized gap_type here means task/decision
+            # bookkeeping has gone wrong somewhere upstream. Previously
+            # this branch did nothing: no decision was written, no
+            # subtask was pushed, and no advance was scheduled -- the
+            # review would silently freeze on this frame with no error,
+            # and the frames in it would eventually surface as the same
+            # "unresolved" integrity failure at _finish(), with no
+            # indication of why. Fail loudly here instead, at the moment
+            # the inconsistency is discovered.
             raise IntegrityError(
                 f"_handle_answer received a task with unrecognized "
                 f"gap_type {gtype!r} for gap_index {task['gap_index']} "
                 f"(segment {seg_start}-{seg_end}). Expected "
-                f"{GAP_TYPE_10!r} or {GAP_TYPE_01!r}."
+                f"{GAP_TYPE_10!r}, {GAP_TYPE_01!r}, or {GAP_TYPE_00!r}."
             )
 
     def _handle_skip(self):
@@ -1055,7 +1135,7 @@ class BinarySearchGUI:
         self._refresh_display(task, answer_text="SKIPPED \u2014 cannot judge, marked UNKNOWN", answer_color="#b8860b")
         self.root.after(300, lambda t=token: self._deferred_advance(t))
 
-    #  Undo / Redo 
+    #  Undo / Redo
     def _go_previous(self):
         if not self.history:
             return
@@ -1092,7 +1172,7 @@ class BinarySearchGUI:
         # deciding" action in this workflow; the task must be answered or
         # undone.
 
-    #  Window close cleanup 
+    #  Window close cleanup
     def _on_close(self):
         import shutil
         _release_all_captures()
@@ -1100,13 +1180,13 @@ class BinarySearchGUI:
             shutil.rmtree(self.temp_dir, ignore_errors=True)
         self.root.destroy()
 
-    #  Finish 
+    #  Finish
     def _finish(self):
         import shutil
         _release_all_captures()
         if self.temp_dir and os.path.isdir(self.temp_dir):
             shutil.rmtree(self.temp_dir, ignore_errors=True)
-        #  Close last gap timer 
+        #  Close last gap timer
         if self._gap_start_time is not None and self._current_gap_index is not None:
             elapsed = time.time() - self._gap_start_time
             for past_task, _, _, _ in reversed(self.history):
@@ -1169,7 +1249,7 @@ class BinarySearchGUI:
             np.where(final_in_nest == -1, "UNKNOWN", "LOGIC")
         )
 
-        # Merge detected rows back in to produce the full output table 
+        # Merge detected rows back in to produce the full output table
         df_detected_out = self.df_all[self.df_all["ASSUMPTION_TYPE"] == "DETECTED"].copy()
         df_detected_out["BINARY_SEARCH"] = 0
         df_detected_out["FILL_SOURCE"]   = "DETECTED"
@@ -1184,7 +1264,7 @@ class BinarySearchGUI:
         bs_unknown    = sum(1 for fn in searchable_frames if final_clf[fn] == -1)
 
         threshold_skipped = sum(len(range(gs + 1, ge)) for gs, ge in self.skipped_gap_keys)
-        zz_skipped = sum(len(range(gs + 1, ge)) for gs, ge in self.zero_zero_gap_keys)
+        zz_skipped = sum(len(range(gs + 1, ge)) for gs, ge in self.zero_zero_skipped_gap_keys)
         ze_skipped = sum(len(range(gs + 1, ge)) for gs, ge in self.one_one_gap_keys)
         bs_input_total = len(neg_frames)
 
@@ -1207,7 +1287,8 @@ class BinarySearchGUI:
                 final_clf,
                 searchable_frames,
                 self.skipped_gap_keys,
-                self.zero_zero_gap_keys,
+                self.zero_zero_reviewed_gap_keys,
+                self.zero_zero_skipped_gap_keys,
                 self.one_one_gap_keys,
                 self.gap_type_map,
                 total_review_seconds,
@@ -1217,7 +1298,7 @@ class BinarySearchGUI:
             messagebox.showerror("Integrity Check Failed", f"The report could not be generated because a frame-count integrity check failed.\n\n{e}\n\nThe SQLite output has been saved and is internally consistent,\nbut the text report was not written.\n\nSQLite: {out_sqlite}")
             self.root.quit()
             return
-        
+
         # COMPLETION DIALOG
         neg_remaining = int((df_out["IN_NEST"] == -1).sum())
 
