@@ -624,6 +624,8 @@ class BinarySearchGUI:
         self.history             = []
         self.current_task        = None
         self.decisions           = {}
+        self._advance_token      = 0
+        self.explicitly_skipped_frames = set()
         self.skipped_frames      = set()
         self.skipped_gap_keys    = set()
         self.zero_zero_gap_keys  = set()
@@ -741,6 +743,8 @@ class BinarySearchGUI:
         self.history       = []
         self.decisions     = {}
         self.current_task  = None
+        self._advance_token = 0
+        self.explicitly_skipped_frames = set()
         self._gap_timings  = []
 
         if not self.task_stack:
@@ -811,12 +815,15 @@ class BinarySearchGUI:
         Button(btn_frame, text="OUT OF NEST  (D)", bg="red", fg="white", width=20, height=2, command=lambda: self._handle_answer(False)).grid(row=0, column=1, padx=6, pady=4)
         Button(btn_frame, text="◀  Undo  (Left)",  width=18, command=self._go_previous).grid(row=1, column=0, padx=6, pady=2)
         Button(btn_frame, text="Redo  (Right)  ▶", width=18, command=self._go_next).grid(row=1, column=1, padx=6, pady=2)
-        Label(btn_frame, text="A = IN NEST   D = OUT   ← Undo   → Redo", font=("Arial", 9), fg="#777777").grid(row=2, column=0, columnspan=2, pady=2)
+        Button(btn_frame, text="Skip \u2014 Cannot Judge  (S)", bg="#b8860b", fg="white", width=38, command=self._handle_skip).grid(row=2, column=0, columnspan=2, padx=6, pady=4)
+        Label(btn_frame, text="A = IN NEST   D = OUT   S = Skip (cannot judge)   ← Undo   → Redo", font=("Arial", 9), fg="#777777").grid(row=3, column=0, columnspan=2, pady=2)
 
         self.root.bind("<a>",     lambda e: self._handle_answer(True))
         self.root.bind("<A>",     lambda e: self._handle_answer(True))
         self.root.bind("<d>",     lambda e: self._handle_answer(False))
         self.root.bind("<D>",     lambda e: self._handle_answer(False))
+        self.root.bind("<s>",     lambda e: self._handle_skip())
+        self.root.bind("<S>",     lambda e: self._handle_skip())
         self.root.bind("<Left>",  lambda e: self._go_previous())
         self.root.bind("<Right>", lambda e: self._go_next())
 
@@ -884,7 +891,7 @@ class BinarySearchGUI:
         if self._current_gap_index != incoming_task["gap_index"]:
             if self._gap_start_time is not None and self._current_gap_index is not None:
                 elapsed = time.time() - self._gap_start_time
-                for past_task, _ in reversed(self.history):
+                for past_task, _, _, _ in reversed(self.history):
                     if past_task["gap_index"] == self._current_gap_index:
                         self._gap_timings.append({"gap_index": self._current_gap_index, "gap_start": past_task["gap_start"], "gap_end": past_task["gap_end"], "duration_seconds": elapsed,})
                         break
@@ -894,15 +901,32 @@ class BinarySearchGUI:
         self.current_task = self.task_stack.pop(0)
         self._refresh_display(self.current_task)
 
+    def _deferred_advance(self, token):
+        """
+        Callback target for the 300ms root.after(...) delay in
+        _handle_answer. Only advances if the token still matches
+        self._advance_token -- i.e. nothing has changed state (a second
+        answer, an undo, or a redo) since this callback was scheduled.
+        A stale callback (superseded by one of those) is silently ignored
+        instead of acting on outdated state. This makes duplicate/stale
+        advances structurally impossible rather than merely unlikely.
+        """
+        if token == self._advance_token:
+            self._load_next_task()
+
     #  Answer handler 
     def _handle_answer(self, in_nest: bool):
         task = self.current_task
         if task is None:
             return
         self.current_task = None
+        self._advance_token += 1
+        token = self._advance_token
 
         snapshot = copy.deepcopy(self.decisions)
-        self.history.append((task, snapshot))
+        skip_snapshot = copy.deepcopy(self.explicitly_skipped_frames)
+        stack_snapshot = list(self.task_stack)
+        self.history.append((task, snapshot, skip_snapshot, stack_snapshot))
         self.redo_stack.clear()
 
         seg_start = task.get("seg_start", task["gap_start"])
@@ -936,7 +960,7 @@ class BinarySearchGUI:
             label = "IN NEST" if in_nest else "OUT OF NEST"
             color = "green"   if in_nest else "red"
             self._refresh_display(task, answer_text=f"{label} \u2014 short segment, filling entirely", answer_color=color)
-            self.root.after(300, self._load_next_task)
+            self.root.after(300, lambda t=token: self._deferred_advance(t))
             return
 
         #  Type 10: in-nest → out-of-nest 
@@ -956,7 +980,7 @@ class BinarySearchGUI:
                     for f in range(mid, seg_end + 1):
                         self.decisions[f] = 0
                 self._refresh_display(task, answer_text="OUT OF NEST — searching left half", answer_color="red")
-            self.root.after(300, self._load_next_task)
+            self.root.after(300, lambda t=token: self._deferred_advance(t))
 
         #  Type 01: out-of-nest → in-nest 
         elif gtype == GAP_TYPE_01:
@@ -975,30 +999,89 @@ class BinarySearchGUI:
                     for f in range(seg_start, mid + 1):
                         self.decisions[f] = 0
                 self._refresh_display(task, answer_text="OUT OF NEST — searching right half", answer_color="red")
-            self.root.after(300, self._load_next_task)
+            self.root.after(300, lambda t=token: self._deferred_advance(t))
+
+        else:
+            # Fix 6: every task reaching _handle_answer should have
+            # gap_type GAP_TYPE_10 or GAP_TYPE_01 -- build_initial_tasks
+            # never queues type-00/type-11 gaps, and _make_subtask always
+            # copies gap_type unchanged from its parent. An unrecognized
+            # gap_type here means task/decision bookkeeping has gone wrong
+            # somewhere upstream. Previously this branch did nothing: no
+            # decision was written, no subtask was pushed, and no advance
+            # was scheduled -- the review would silently freeze on this
+            # frame with no error, and the frames in it would eventually
+            # surface as the same "unresolved" integrity failure at
+            # _finish(), with no indication of why. Fail loudly here
+            # instead, at the moment the inconsistency is discovered.
+            raise IntegrityError(
+                f"_handle_answer received a task with unrecognized "
+                f"gap_type {gtype!r} for gap_index {task['gap_index']} "
+                f"(segment {seg_start}-{seg_end}). Expected "
+                f"{GAP_TYPE_10!r} or {GAP_TYPE_01!r}."
+            )
+
+    def _handle_skip(self):
+        """
+        Fix 5: an explicit "I cannot judge this" control. Unlike an answer,
+        this does not narrow the search -- it deliberately marks the whole
+        current segment UNKNOWN (-1) and stops searching it, recording the
+        frames in self.explicitly_skipped_frames so _finish()'s integrity
+        check (which exists to catch frames *accidentally* left without a
+        decision) does not treat a deliberate skip as a bug. Counted in
+        bs_unknown exactly like any other -1, per write_summary_report's
+        existing accounting.
+        """
+        task = self.current_task
+        if task is None:
+            return
+        self.current_task = None
+        self._advance_token += 1
+        token = self._advance_token
+
+        snapshot = copy.deepcopy(self.decisions)
+        skip_snapshot = copy.deepcopy(self.explicitly_skipped_frames)
+        stack_snapshot = list(self.task_stack)
+        self.history.append((task, snapshot, skip_snapshot, stack_snapshot))
+        self.redo_stack.clear()
+
+        seg_start = task.get("seg_start", task["gap_start"])
+        seg_end   = task.get("seg_end",   task["gap_end"])
+
+        for f in range(seg_start, seg_end + 1):
+            self.decisions[f] = -1
+            self.explicitly_skipped_frames.add(f)
+
+        self._refresh_display(task, answer_text="SKIPPED \u2014 cannot judge, marked UNKNOWN", answer_color="#b8860b")
+        self.root.after(300, lambda t=token: self._deferred_advance(t))
 
     #  Undo / Redo 
     def _go_previous(self):
         if not self.history:
             return
+        self._advance_token += 1
         if self.current_task is not None:
             self.redo_stack.append(
-                (self.current_task, copy.deepcopy(self.decisions)))
-            self.task_stack.insert(0, self.current_task)
-        prev_task, prev_decisions = self.history.pop()
+                (self.current_task, copy.deepcopy(self.decisions),
+                 copy.deepcopy(self.explicitly_skipped_frames), list(self.task_stack)))
+        prev_task, prev_decisions, prev_skipped, prev_stack = self.history.pop()
         self.decisions    = prev_decisions
+        self.explicitly_skipped_frames = prev_skipped
         self.current_task = prev_task
-        self.task_stack   = [t for t in self.task_stack if not (t["gap_index"] == prev_task["gap_index"] and t.get("seg_start", t["gap_start"]) >= prev_task.get("seg_start", prev_task["gap_start"]) and t.get("seg_end", t["gap_end"]) <= prev_task.get("seg_end", prev_task["gap_end"]) and t is not prev_task)]
+        self.task_stack   = prev_stack
         self._refresh_display(prev_task, answer_text="Undone \u2014 re-answer or continue", answer_color="#888888")
 
     def _go_next(self):
         if self.redo_stack:
-            redo_task, redo_decisions = self.redo_stack.pop()
+            self._advance_token += 1
+            redo_task, redo_decisions, redo_skipped, redo_stack_snapshot = self.redo_stack.pop()
             if self.current_task is not None:
-                self.history.append((self.current_task, copy.deepcopy(self.decisions)))
+                self.history.append((self.current_task, copy.deepcopy(self.decisions),
+                                      copy.deepcopy(self.explicitly_skipped_frames), list(self.task_stack)))
             self.decisions    = redo_decisions
+            self.explicitly_skipped_frames = redo_skipped
             self.current_task = redo_task
-            self.task_stack   = [t for t in self.task_stack if t is not redo_task]
+            self.task_stack   = redo_stack_snapshot
             self._refresh_display(redo_task,
                 answer_text="Redone", answer_color="#555555")
         # If there is nothing to redo, do nothing. The current task is
@@ -1026,7 +1109,7 @@ class BinarySearchGUI:
         #  Close last gap timer 
         if self._gap_start_time is not None and self._current_gap_index is not None:
             elapsed = time.time() - self._gap_start_time
-            for past_task, _ in reversed(self.history):
+            for past_task, _, _, _ in reversed(self.history):
                 if past_task["gap_index"] == self._current_gap_index:
                     self._gap_timings.append({
                         "gap_index":        self._current_gap_index,
@@ -1064,14 +1147,14 @@ class BinarySearchGUI:
 
         final_clf = dict(zip(fn_arr.tolist(), final_in_nest.tolist()))
 
-        unresolved = [fn for fn in searchable_frames if final_clf[fn] == -1]
+        unresolved = [fn for fn in searchable_frames if final_clf[fn] == -1 and fn not in self.explicitly_skipped_frames]
         if unresolved:
             messagebox.showerror(
                 "Integrity Check Failed",
                 f"{len(unresolved)} searchable frame(s) never received an explicit "
                 f"binary-search decision (e.g. frame {unresolved[0]}).\n\n"
-                f"No output was written. This indicates a bug in task-stack "
-                f"rebuilding during undo/redo — please report this."
+                f"No output was written. This indicates a bug in the review "
+                f"session's task/decision bookkeeping — please report this."
             )
             self.root.quit()
             return
