@@ -90,7 +90,7 @@ table where:
 FRONT_X = -1
 ```
 
-After deletion, it runs `VACUUM` to reclaim the disk space freed by the
+After deletion, it runs `VACUUM INTO` to reclaim the disk space freed by the
 deleted rows (SQLite does not shrink a database file automatically after a
 `DELETE`; the file only shrinks once `VACUUM` rewrites it).
 
@@ -563,7 +563,6 @@ for manual review.
 | `lmt_binary_search_<YYYY-MM-DD_HH-MM-SS>.sqlite` (script 2 output) | SQLite database, table `GAP_FILL_ANALYSIS` | Fully classified per-frame data to draw QC samples from. |
 | LMT video files (`*.mp4`) | Video | Source of the screenshot images for each sampled frame. |
 | Output folder | Directory | Where per-pool results are written. |
-| Animal ID | Integer | Recorded alongside each sample. |
 | Sample count | Integer | Applied independently to each selected pool. |
 | QC pool selection | Checkboxes | Any of `DETECTED`, `BINARY_SEARCH`, `LOGIC` rows. |
 
@@ -581,7 +580,7 @@ Per selected pool, written to `output_folder/{qc_mode}_{timestamp}/`:
 | Column | Meaning |
 |---|---|
 | `sample_id` | 1-based counter, also embedded in the screenshot filename. |
-| `animal_id` | Animal ID entered by the user. |
+| `animal_id` | Animal ID extracted from database. |
 | `video` | Basename of the video the screenshot came from. |
 | `frame_global` | The actual (possibly nearest-neighbor-resolved) frame captured. |
 | `requested_frame` | The originally sampled `FRAMENUMBER`, before any resolution. |
@@ -594,7 +593,7 @@ Per selected pool, written to `output_folder/{qc_mode}_{timestamp}/`:
 
 ### Processing Steps
 1. **Configure the run** via the GUI: source database, videos, output
-   folder, animal ID, sample size, and which pools to draw from.
+   folder, sample size, and which pools to draw from.
 2. **Guard existing output.** If a pool's output folder for today's date
    already contains files (e.g. from an earlier run), ask for confirmation
    before continuing rather than silently overwriting.
@@ -612,12 +611,13 @@ Per selected pool, written to `output_folder/{qc_mode}_{timestamp}/`:
 5. **Draw a random sample**, bounded to the pool's actual size, using an
    explicit, freshly-generated random seed that is reported back to the
    user, the draw is still effectively random every run, but the exact
-   sample can be reproduced later if the seed is recorded.
-6. **Resolve and extract a screenshot for every sampled frame**, using the
+   sample can be reproduced later if the seed is recorded. Samples extracted
+   are proportional to gap size.
+7. **Resolve and extract a screenshot for every sampled frame**, using the
    same nearest-available-frame strategy as script 2, recording both the
    requested and resolved frame numbers so a reviewer can see whether (and
    how far) a substitution was made.
-7. **Write the pool's SQLite table and screenshot folder**, and report a
+8. **Write the pool's SQLite table and screenshot folder**, and report a
    per-pool summary including the sampling seed used.
 
 ### Key Design Decisions & Assumptions
