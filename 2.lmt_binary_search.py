@@ -17,9 +17,14 @@ from PIL import Image, ImageTk
 MIN_GAP_DURATION_FOR_BINARY_SEARCH = 30  # seconds
 FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES = 1 # minutes
 
-# Git Issue #19: for type-00 (OUT->OUT) gaps above MIN_GAP_DURATION_FOR_BINARY_SEARCH,
-# sample left-to-right at this interval and fill each checkpoint's answer
-# backward to the previous checkpoint. Lower = more accuracy, more clicks.
+# Git Issue #19 (reopened for performance): for type-00 (OUT->OUT) gaps
+# above MIN_GAP_DURATION_FOR_BINARY_SEARCH, sample left-to-right at this
+# interval and fill each OUT checkpoint's answer backward to the previous
+# checkpoint, exactly as before. As soon as a checkpoint comes back IN,
+# sampling stops there: the remainder of the gap is handed off to the
+# existing type-10 (in-nest -> out-of-nest) binary search instead of
+# continuing to sample every interval to the end. Lower interval = more
+# accuracy, more clicks (but only up to the first IN checkpoint now).
 TYPE00_REVIEW_INTERVAL_SECONDS = 60  # seconds
 
 GAP_TYPE_00 = "00"
@@ -51,15 +56,28 @@ def _build_type00_checkpoint_tasks(gs, ge, b_left, b_right, gap_idx, total_gaps)
     Git Issue #19: build the flat, left-to-right sequence of review checkpoint
     tasks for a single type-00 (OUT->OUT) gap. Sample every
     TYPE00_REVIEW_INTERVAL_SECONDS starting from the gap's left edge; when
-    a checkpoint is answered, the answer fills every frame from the end of
-    the previous checkpoint (exclusive) through this checkpoint (inclusive)
-    -- i.e. "fill in towards the left". The final checkpoint always lands
+    a checkpoint is answered OUT, the answer fills every frame from the end
+    of the previous checkpoint (exclusive) through this checkpoint
+    (inclusive) -- i.e. "fill in towards the left" -- and review continues
+    to the next checkpoint in this list. The final checkpoint always lands
     exactly on gap_end, so the right edge is always explicitly reviewed
     rather than extrapolated from the last regular interval.
 
+    Reopened (performance): the first checkpoint answered IN stops this
+    sampling early -- _handle_answer discards any remaining checkpoint
+    tasks for the gap from the task stack and instead queues a single
+    type-10 (in-nest -> out-of-nest) binary-search subtask covering the
+    rest of the gap, converging on the exact transition frame in
+    O(log n) clicks instead of continuing to sample every interval to
+    gap_end. This function itself is unchanged: it always builds the full
+    would-be checkpoint sequence, since which checkpoint (if any) will come
+    back IN is unknown until the reviewer answers.
+
     Precomputed and flat, not synthesized at answer time -- consistent
     with how type 01/10 tasks are structured, but with no subtask
-    creation in _handle_answer for this type.
+    creation in _handle_answer for the OUT-checkpoint case. The IN-found
+    case does create a subtask, using the same _make_subtask helper type
+    01/10 already use.
     """
     gap_start = gs + 1
     gap_end   = ge - 1
@@ -983,7 +1001,17 @@ class BinarySearchGUI:
             }
 
         #  Short segment: fill entirely
-        if seg_duration_minutes <= FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES:
+        #  Git Issue #19 (reopened): type-00 checkpoints are excluded from
+        #  this early return. Their checkpoint interval (default 60s) is
+        #  the same length as this short-segment threshold (default 1 min
+        #  = 60s), so nearly every type-00 checkpoint segment would
+        #  otherwise land exactly on this boundary and short-circuit here
+        #  -- on an IN answer, that would skip the type-10 hand-off below
+        #  entirely, since this branch only fills and advances, it never
+        #  hands off. Type-00 always goes through its own elif below
+        #  instead, which fills identically on an OUT answer and adds the
+        #  hand-off on an IN answer, regardless of segment duration.
+        if gtype != GAP_TYPE_00 and seg_duration_minutes <= FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES:
             fill_value = 1 if in_nest else 0
             for f in range(seg_start, seg_end + 1):
                 self.decisions[f] = fill_value
@@ -1031,14 +1059,44 @@ class BinarySearchGUI:
                 self._refresh_display(task, answer_text="OUT OF NEST — searching right half", answer_color="red")
             self.root.after(300, lambda t=token: self._deferred_advance(t))
 
-        #  Type 00: OUT-of-nest -> OUT-of-nest (Issue #19 checkpoint review)
+        #  Type 00: OUT-of-nest -> OUT-of-nest (Issue #19 checkpoint review,
+        #  reopened for performance)
         elif gtype == GAP_TYPE_00:
-            fill_value = 1 if in_nest else 0
-            for f in range(seg_start, seg_end + 1):
-                self.decisions[f] = fill_value
-            label = "IN NEST" if in_nest else "OUT OF NEST"
-            color = "green"   if in_nest else "red"
-            self._refresh_display(task, answer_text=f"{label} — filled toward left", answer_color=color)
+            if in_nest:
+                # First checkpoint confirmed IN: stop OUT->OUT sampling here.
+                # Keep the existing fill-left behavior for the sampled
+                # portion up to and including this checkpoint (mid ==
+                # seg_end by construction -- see _build_type00_checkpoint_
+                # tasks), then hand the remainder of the gap off to the
+                # existing type-10 (in-nest -> out-of-nest) binary search:
+                # this checkpoint is now a known IN left boundary, and the
+                # gap's right edge is already known OUT (that's what made
+                # this a type-00 gap in the first place), so the remainder
+                # is exactly a type-10 sub-problem.
+                for f in range(seg_start, seg_end + 1):
+                    self.decisions[f] = 1
+
+                # Discard any remaining precomputed OUT-checkpoint tasks for
+                # this gap -- they're superseded by the type-10 search below
+                # and must not be shown (would re-review already-decided
+                # frames and duplicate/contradict the search in progress).
+                self.task_stack = [t for t in self.task_stack if t["gap_index"] != task["gap_index"]]
+
+                gap_end_overall = task["gap_end"]
+                if mid + 1 <= gap_end_overall:
+                    handoff_task = _make_subtask(mid + 1, gap_end_overall)
+                    handoff_task["gap_type"]      = GAP_TYPE_10
+                    handoff_task["boundary_left"] = mid  # the checkpoint just confirmed IN
+                    self.task_stack.insert(0, handoff_task)
+                    self._refresh_display(task, answer_text="IN NEST \u2014 switching to binary search for exit", answer_color="green")
+                else:
+                    # This checkpoint was already gap_end (the last one) --
+                    # nothing remains to search.
+                    self._refresh_display(task, answer_text="IN NEST \u2014 filled toward left", answer_color="green")
+            else:
+                for f in range(seg_start, seg_end + 1):
+                    self.decisions[f] = 0
+                self._refresh_display(task, answer_text="OUT OF NEST \u2014 filled toward left", answer_color="red")
             self.root.after(300, lambda t=token: self._deferred_advance(t))
 
         else:
