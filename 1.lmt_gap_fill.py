@@ -202,15 +202,15 @@ def parse_args(argv=None):
         "-o", "--output-folder", required=True,
         help="Directory to write the gap-fill result SQLite into.",
     )
-    parser.add_argument("--animal-id", type=int, default=1, help="Animal ID to process (default: 1).")
-    parser.add_argument("--nest-xmin", type=float, default=100, help="Nest ROI X minimum (default: 100).")
-    parser.add_argument("--nest-xmax", type=float, default=250, help="Nest ROI X maximum (default: 250).")
-    parser.add_argument("--nest-ymin", type=float, default=50, help="Nest ROI Y minimum (default: 50).")
-    parser.add_argument("--nest-ymax", type=float, default=200, help="Nest ROI Y maximum (default: 200).")
-    parser.add_argument("--buffer-xmin", type=float, default=80, help="Buffer ROI X minimum (default: 80).")
-    parser.add_argument("--buffer-xmax", type=float, default=270, help="Buffer ROI X maximum (default: 270).")
-    parser.add_argument("--buffer-ymin", type=float, default=30, help="Buffer ROI Y minimum (default: 30).")
-    parser.add_argument("--buffer-ymax", type=float, default=220, help="Buffer ROI Y maximum (default: 220).")
+    parser.add_argument("--animal-id", type=int, required=True, help="Animal ID to process. Required, no default.")
+    parser.add_argument("--nest-xmin", type=float, required=True, help="Nest ROI X minimum. Required, no default.")
+    parser.add_argument("--nest-xmax", type=float, required=True, help="Nest ROI X maximum. Required, no default.")
+    parser.add_argument("--nest-ymin", type=float, required=True, help="Nest ROI Y minimum. Required, no default.")
+    parser.add_argument("--nest-ymax", type=float, required=True, help="Nest ROI Y maximum. Required, no default.")
+    parser.add_argument("--buffer-xmin", type=float, required=True, help="Buffer ROI X minimum. Required, no default.")
+    parser.add_argument("--buffer-xmax", type=float, required=True, help="Buffer ROI X maximum. Required, no default.")
+    parser.add_argument("--buffer-ymin", type=float, required=True, help="Buffer ROI Y minimum. Required, no default.")
+    parser.add_argument("--buffer-ymax", type=float, required=True, help="Buffer ROI Y maximum. Required, no default.")
     return parser.parse_args(argv)
 
 

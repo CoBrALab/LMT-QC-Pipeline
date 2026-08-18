@@ -46,19 +46,14 @@ Pillow) into a local `.venv/`.
 **Run any script:**
 
 Scripts 0, 1, and 3 are pure command-line tools; every input is a CLI
-argument/flag (run with `--help` for the full list):
+argument/flag. Scripts 2 and 4 take their file/video/folder inputs as CLI
+arguments too, but still open a GUI window for the genuinely interactive
+part (the binary-search/checkpoint review in script 2, and manual QC
+labeling in script 4). See the **CLI Reference** section below for the
+full argument list (required vs. optional, defaults, and an example) for
+each script, or run any script with `--help`.
 ```bash
-uv run python 0.Preprocessing.py -i RAW.sqlite -o OUT_DIR
-uv run python 1.lmt_gap_fill.py -i RAW_processed.sqlite -o OUT_DIR --animal-id 1
-uv run python 3.lmt_qc_sampler.py -i lmt_binary_search_A1_....sqlite -v video_t0.mp4 [video_t1.mp4 ...] -o OUT_DIR
-```
-Scripts 2 and 4 take their file/video/folder inputs as CLI arguments too,
-but still open a GUI window for the genuinely interactive part (the
-binary-search/checkpoint review in script 2, and manual QC labeling in
-script 4):
-```bash
-uv run python 2.lmt_binary_search.py -i lmt_gap_fill_A1_....sqlite -v video_t0.mp4 [video_t1.mp4 ...] -o OUT_DIR
-uv run python 4.lmt_qc_validator.py -i lmt_qc_sampler_DETECTED_A1_....sqlite -o SCREENSHOT_DIR [-v video_t0.mp4 ...]
+uv run python 0.Preprocessing.py --help
 ```
 `uv run` automatically ensures the environment is in sync with `uv.lock`
 before launching, so there's no separate "activate the venv" step.
@@ -79,6 +74,146 @@ review, and manual QC labeling, respectively), so they still need a
 graphical display (X11, Wayland, macOS, or Windows) to run. uv's managed
 Python build already bundles Tcl/Tk, so no separate system `python3-tk`
 package install is required for the two scripts that still need it.
+
+---
+
+## CLI Reference
+
+Every argument below is exactly as declared in each script's `argparse`
+parser (or, for script 2, `_build_arg_parser()`) — run any script with
+`--help` to see this same information from argparse directly.
+
+### `0.Preprocessing.py`
+
+**Required:**
+
+| Argument | Type | Controls |
+|---|---|---|
+| `-i`, `--input` | path | The LMT Output SQLite to clean. |
+| `-o`, `--output-folder` | directory | Where `{input_name}_processed.sqlite` is written. |
+
+**Optional (no value taken — plain flags):**
+
+| Argument | Default | Controls |
+|---|---|---|
+| `--overwrite` | off | Overwrite `{input_name}_processed.sqlite` if it already exists in the output folder. Without it, the script aborts rather than replacing a previous run's output. |
+| `--force` | off | Proceed with deletion even if some `FRONT_X = -1` rows don't also have `FRONT_Y`/`FRONT_Z`/`BACK_X`/`BACK_Y`/`BACK_Z` all equal to `-1`. Without it, the script aborts if that assumption doesn't hold for the file. |
+
+**Example:**
+```bash
+uv run python 0.Preprocessing.py -i raw.sqlite -o ./out --overwrite
+```
+
+### `1.lmt_gap_fill.py`
+
+**Required — every one of the following, with no defaults.** Unlike the
+retired GUI (which pre-filled these), the CLI intentionally does not
+guess an animal ID or ROI/buffer coordinates for you: an unnoticed
+pre-filled value silently applied to the wrong animal or the wrong nest
+geometry would corrupt the in-nest time estimate without any indication
+something was wrong, so the script refuses to run until every one of
+these is supplied explicitly.
+
+| Argument | Type | Controls |
+|---|---|---|
+| `-i`, `--input` | path | The `{name}_processed.sqlite` file from `0.Preprocessing.py`. |
+| `-o`, `--output-folder` | directory | Where the timestamped `lmt_gap_fill_...sqlite` result is written. |
+| `--animal-id` | int | Which animal's `DETECTION` rows to process. |
+| `--nest-xmin` | float | Nest ROI X minimum. |
+| `--nest-xmax` | float | Nest ROI X maximum. |
+| `--nest-ymin` | float | Nest ROI Y minimum. |
+| `--nest-ymax` | float | Nest ROI Y maximum. |
+| `--buffer-xmin` | float | Buffer ROI X minimum. |
+| `--buffer-xmax` | float | Buffer ROI X maximum. |
+| `--buffer-ymin` | float | Buffer ROI Y minimum. |
+| `--buffer-ymax` | float | Buffer ROI Y maximum. |
+
+**Optional:** none — every argument above is required.
+
+**Example:**
+```bash
+uv run python 1.lmt_gap_fill.py \
+  -i raw_processed.sqlite -o ./out \
+  --animal-id 1 \
+  --nest-xmin 100 --nest-xmax 250 --nest-ymin 50 --nest-ymax 200 \
+  --buffer-xmin 80 --buffer-xmax 270 --buffer-ymin 30 --buffer-ymax 220
+```
+
+### `2.lmt_binary_search.py`
+
+**Required:**
+
+| Argument | Type | Controls |
+|---|---|---|
+| `-i`, `--input` | path | The `lmt_gap_fill_A<animal_id>_<timestamp>.sqlite` file from `1.lmt_gap_fill.py`. |
+| `-v`, `--videos` | one or more paths | LMT video file(s) (`*.mp4`) covering the gaps to review. |
+| `-o`, `--output-folder` | directory | Where the resulting SQLite/report is written. |
+
+**Optional:** none — these three are the only CLI arguments; everything
+else (thresholds, review interval, etc.) is a hardcoded module constant,
+unchanged by this issue.
+
+**Example:**
+```bash
+uv run python 2.lmt_binary_search.py \
+  -i lmt_gap_fill_A1_....sqlite \
+  -v video_t0.mp4 video_t50000.mp4 \
+  -o ./out
+```
+This still opens the interactive binary-search/checkpoint-review GUI once
+the arguments above are validated.
+
+### `3.lmt_qc_sampler.py`
+
+**Required:**
+
+| Argument | Type | Controls |
+|---|---|---|
+| `-i`, `--input` | path | The `lmt_binary_search_A<animal_id>_<timestamp>.sqlite` file from `2.lmt_binary_search.py`. |
+| `-v`, `--videos` | one or more paths | LMT video file(s) (`*.mp4`) to extract sample screenshots from. |
+| `-o`, `--output-folder` | directory | Where per-pool results are written. |
+
+**Optional:**
+
+| Argument | Default | Controls |
+|---|---|---|
+| `-n`, `--samples` | `100` | Number of samples to draw, applied independently to each selected pool. |
+| `--pools` | all three (`DETECTED BINARY_SEARCH LOGIC`) | Which QC pool(s) to sample from; pass one or more of `DETECTED`, `BINARY_SEARCH`, `LOGIC`. |
+| `--overwrite` | off | Overwrite a pool's output folder if it already contains files from an earlier run today. Without it, that pool aborts. |
+
+**Example:**
+```bash
+uv run python 3.lmt_qc_sampler.py \
+  -i lmt_binary_search_A1_....sqlite \
+  -v video_t0.mp4 video_t50000.mp4 \
+  -o ./out \
+  -n 100 --pools DETECTED LOGIC
+```
+
+### `4.lmt_qc_validator.py`
+
+**Required:**
+
+| Argument | Type | Controls |
+|---|---|---|
+| `-i`, `--input` | path | The `lmt_qc_sampler_<qc_mode>_A<animal_id>_<timestamp>.sqlite` file from `3.lmt_qc_sampler.py`. |
+| `-o`, `--screenshot-folder` | directory | The `Screenshots/` folder produced alongside that same file. |
+
+**Optional:**
+
+| Argument | Default | Controls |
+|---|---|---|
+| `-v`, `--videos` | none (empty) | LMT video file(s) (`*.mp4`); when supplied, enables the three-panel before/QC-frame/after view for `BINARY_SEARCH`/`LOGIC`/legacy `ASSUMED`-mode samples. Not needed for `DETECTED`-mode samples, which show only the pre-extracted screenshot. |
+
+**Example:**
+```bash
+uv run python 4.lmt_qc_validator.py \
+  -i lmt_qc_sampler_DETECTED_A1_....sqlite \
+  -o ./out/DETECTED_A1_.../Screenshots \
+  -v video_t0.mp4
+```
+This still opens the interactive manual-QC-labeling GUI once the
+arguments above are validated.
 
 ---
 
@@ -303,8 +438,8 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
   gap-fill computation).
 - **Standard library**: `argparse`, `os`, `sqlite3`, `sys`, `datetime`.
 - **Configuration files / environment variables**: none; animal ID and ROI
-  bounds are CLI arguments (`--animal-id`, `--nest-*`, `--buffer-*`), each
-  with a default matching the old GUI's pre-filled value.
+  bounds are CLI arguments (`--animal-id`, `--nest-*`, `--buffer-*`), all
+  required with no defaults — see the **CLI Reference** section above.
 - **Expected directory structure**: none required beyond a writable output
   folder.
 - **Platform assumptions**: none — fully headless, no GUI toolkit is used.
@@ -877,4 +1012,4 @@ No video files, SQLite databases, or GUI interaction are required, the suite run
 - External dependencies: pytest>=8.0.0 (dev dependency only, not required to run the pipeline itself).
 - Standard library: importlib.util, pathlib, sys.
 - Configuration files: pyproject.toml's [dependency-groups] dev section.
-- Platform assumptions: none beyond what the pipeline scripts themselves require. The suite is fully headless and does not depend on a display server, video codec support, or a live SQLite file
+- Platform assumptions: none beyond what the pipeline scripts themselves require. The suite is fully headless and does not depend on a display server, video codec support, or a live SQLite file.
