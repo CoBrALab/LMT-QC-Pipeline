@@ -1,5 +1,7 @@
+import argparse
 import os
 import re
+import sys
 import cv2
 
 from lmt_common import (DB_FPS, FRAME_CONVERSION, QC_MODE_DETECTED, QC_MODE_BINARY_SEARCH, 
@@ -10,7 +12,7 @@ import sqlite3
 import pandas as pd
 from datetime import datetime
 from tkinter import *
-from tkinter import filedialog, messagebox
+from tkinter import messagebox
 from PIL import Image, ImageTk
 
 date_string = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -437,29 +439,8 @@ def next_sample():
             + f"\n\nValidation report saved to:\n{report_file}"
         )
 
-# Setup actions
-def select_database():
-    global qc_db_path
-    qc_db_path = filedialog.askopenfilename(filetypes=[("SQLite Database", "*.sqlite")])
-    db_label.config(text=qc_db_path)
-
-def select_videos():
-    global video_paths_list
-    video_paths_list = list(filedialog.askopenfilenames(filetypes=[("MP4 Video", "*.mp4")]))
-    vid_label.config(text=f"{len(video_paths_list)} video(s) selected" if video_paths_list else "No videos selected")
-
-def select_folder():
-    global screenshot_folder
-    screenshot_folder = filedialog.askdirectory()
-    folder_label.config(text=screenshot_folder)
-
 def start_qc():
     global df, current_index, video_map
-
-    if not qc_db_path:
-        messagebox.showerror("Error", "Please select QC SQLite database"); return
-    if not screenshot_folder:
-        messagebox.showerror("Error", "Please select screenshot folder");   return
 
     # Build video map if videos were provided (optional; enables three-panel display)
     if video_paths_list:
@@ -536,8 +517,54 @@ def bind_keys(root):
     root.bind("<Right>", lambda e: next_sample())
     root.bind("<Left>",  lambda e: previous_sample())
 
+
+# CLI
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="LMT QC Validator: manual labeling of QC samples drawn "
+                    "by 3.lmt_qc_sampler.py, plus resulting accuracy metrics."
+    )
+    parser.add_argument(
+        "-i", "--input", required=True,
+        help="Path to lmt_qc_sampler_<qc_mode>_A<animal_id>_<timestamp>.sqlite "
+             "(3.lmt_qc_sampler.py output).",
+    )
+    parser.add_argument(
+        "-o", "--screenshot-folder", required=True,
+        help="Screenshot folder produced by 3.lmt_qc_sampler.py for this sample.",
+    )
+    parser.add_argument(
+        "-v", "--videos", nargs="+", default=[],
+        help="Optional LMT video file(s) (*.mp4); enables the three-panel "
+             "before/QC-frame/after view for ASSUMED-type samples.",
+    )
+    return parser.parse_args(argv)
+
+
+def _validate_cli_args(args):
+    errors = []
+    if not os.path.isfile(args.input):
+        errors.append(f"Input SQLite not found: {args.input}")
+    if not os.path.isdir(args.screenshot_folder):
+        errors.append(f"Screenshot folder not found: {args.screenshot_folder}")
+    missing_videos = [v for v in args.videos if not os.path.isfile(v)]
+    if missing_videos:
+        errors.append("Video file(s) not found:\n  " + "\n  ".join(missing_videos))
+    if errors:
+        for e in errors:
+            print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 # GUI layout
 if __name__ == "__main__":
+    cli_args = parse_args()
+    _validate_cli_args(cli_args)
+
+    qc_db_path        = cli_args.input
+    screenshot_folder = cli_args.screenshot_folder
+    video_paths_list  = list(cli_args.videos)
+
     root = Tk()
     root.title("LMT QC Validator")
     root.geometry("1600x950")
@@ -549,24 +576,6 @@ if __name__ == "__main__":
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", _on_close)
-
-    # Top setup bar
-    top_frame = Frame(root)
-    top_frame.pack(pady=10)
-
-    Button(top_frame, text="Select lmt_qc_sampler_<qc_mode>__A<animal_id>_<timestamp>.sqlite", command=select_database).grid(row=0, column=0, padx=10)
-    db_label = Label(top_frame, text="No database selected", wraplength=500)
-    db_label.grid(row=0, column=1)
-
-    Button(top_frame, text="Select LMT Videos  (for 3-panel view)", command=select_videos).grid(row=1, column=0, padx=10)
-    vid_label = Label(top_frame, text="No videos selected  (optional — enables boundary panels)", wraplength=500)
-    vid_label.grid(row=1, column=1)
-
-    Button(top_frame, text="Select Screenshot Folder", command=select_folder).grid(row=2, column=0, padx=10)
-    folder_label = Label(top_frame, text="No folder selected", wraplength=500)
-    folder_label.grid(row=2, column=1)
-
-    Button(top_frame, text="START QC", command=start_qc, bg="green", fg="white", width=20).grid(row=3, column=0, columnspan=2, pady=10)
 
     # Main area
     main_frame = Frame(root)
@@ -643,5 +652,10 @@ if __name__ == "__main__":
                 "\u2190 = Previous\n"
                 "\u2192 = Next (without labelling)"),
         font=("Arial", 10), fg="gray", justify=CENTER).pack(pady=15)
+
+    # db/video/screenshot-folder selection is now supplied via CLI arguments
+    # (parsed and validated above) instead of the GUI file-picker setup bar
+    # that used to live here; start the QC session immediately.
+    start_qc()
 
     root.mainloop()

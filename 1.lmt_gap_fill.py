@@ -1,10 +1,10 @@
+import argparse
 import os
 import sqlite3
+import sys
 import numpy as np
 import pandas as pd
 from datetime import datetime
-from tkinter import *
-from tkinter import filedialog, messagebox
 
 # Main analysis
 def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_ymin, nest_ymax, buffer_xmin, buffer_xmax, buffer_ymin, buffer_ymax):
@@ -177,96 +177,73 @@ def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_
     output_df.to_sql("GAP_FILL_ANALYSIS", conn, if_exists="replace", index=False)
     conn.close()
 
-    messagebox.showinfo(
-        "Analysis Complete",
+    print(
         f"Gap Fill Analysis Complete\n\n"
         f"Detected Frames:     {detected_rows:,}\n"
         f"  - IN NEST:         {detected_in_nest_frames:,}\n"
         f"  - NOT IN NEST:     {detected_not_in_nest_frames:,}\n\n"
         f"Assumed Frames:      {assumed_rows:,}\n"
         f"Total Frames:        {len(output_df):,}\n\n"
-        f"SQLite Output:\n{output_sqlite}\n\n"
+        f"SQLite Output:\n{output_sqlite}\n"
     )
 
 
-# GUI
-input_db_path      = ""
-output_folder_path = ""
+# CLI
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="LMT Gap Fill Assumption Generator: classifies detected "
+                    "frames and logic-fills/flags gaps for one animal."
+    )
+    parser.add_argument(
+        "-i", "--input", required=True,
+        help="Path to <SQLite_Name>_processed.sqlite (0.Preprocessing.py output).",
+    )
+    parser.add_argument(
+        "-o", "--output-folder", required=True,
+        help="Directory to write the gap-fill result SQLite into.",
+    )
+    parser.add_argument("--animal-id", type=int, default=1, help="Animal ID to process (default: 1).")
+    parser.add_argument("--nest-xmin", type=float, default=100, help="Nest ROI X minimum (default: 100).")
+    parser.add_argument("--nest-xmax", type=float, default=250, help="Nest ROI X maximum (default: 250).")
+    parser.add_argument("--nest-ymin", type=float, default=50, help="Nest ROI Y minimum (default: 50).")
+    parser.add_argument("--nest-ymax", type=float, default=200, help="Nest ROI Y maximum (default: 200).")
+    parser.add_argument("--buffer-xmin", type=float, default=80, help="Buffer ROI X minimum (default: 80).")
+    parser.add_argument("--buffer-xmax", type=float, default=270, help="Buffer ROI X maximum (default: 270).")
+    parser.add_argument("--buffer-ymin", type=float, default=30, help="Buffer ROI Y minimum (default: 30).")
+    parser.add_argument("--buffer-ymax", type=float, default=220, help="Buffer ROI Y maximum (default: 220).")
+    return parser.parse_args(argv)
 
-def select_database():
-    global input_db_path
-    input_db_path = filedialog.askopenfilename(filetypes=[("SQLite Database", "*.sqlite *.db")])
-    label_db.config(text=input_db_path)
 
-def select_output_folder():
-    global output_folder_path
-    output_folder_path = filedialog.askdirectory()
-    label_output.config(text=output_folder_path)
+def main(argv=None):
+    args = parse_args(argv)
 
-def start():
+    if not os.path.isfile(args.input):
+        print(f"ERROR: Please provide a valid LMT SQLite database. Not found: {args.input}", file=sys.stderr)
+        return 1
+    if not os.path.isdir(args.output_folder):
+        print(f"ERROR: Please provide a valid output folder. Not found: {args.output_folder}", file=sys.stderr)
+        return 1
+
     try:
-        if not input_db_path:
-            raise Exception("Please select an LMT SQLite database")
-        if not output_folder_path:
-            raise Exception("Please select an output folder")
         run_analysis(
-            input_db=input_db_path,
-            output_folder=output_folder_path,
-            animal_id=int(entry_animal.get()),
-            nest_xmin=float(entry_nest_xmin.get()),
-            nest_xmax=float(entry_nest_xmax.get()),
-            nest_ymin=float(entry_nest_ymin.get()),
-            nest_ymax=float(entry_nest_ymax.get()),
-            buffer_xmin=float(entry_buffer_xmin.get()),
-            buffer_xmax=float(entry_buffer_xmax.get()),
-            buffer_ymin=float(entry_buffer_ymin.get()),
-            buffer_ymax=float(entry_buffer_ymax.get()),
+            input_db=args.input,
+            output_folder=args.output_folder,
+            animal_id=args.animal_id,
+            nest_xmin=args.nest_xmin,
+            nest_xmax=args.nest_xmax,
+            nest_ymin=args.nest_ymin,
+            nest_ymax=args.nest_ymax,
+            buffer_xmin=args.buffer_xmin,
+            buffer_xmax=args.buffer_xmax,
+            buffer_ymin=args.buffer_ymin,
+            buffer_ymax=args.buffer_ymax,
         )
     except Exception as e:
-        messagebox.showerror("Error", str(e))
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
+
+    return 0
+
 
 if __name__ == "__main__":
-    root = Tk()
-    root.title("LMT Gap Fill Assumption Generator")
-    root.geometry("800x850")
-
-    Label(root, text="LMT Gap Fill Assumption Generator", font=("Arial", 16, "bold")).pack(pady=10)
-
-    Button(root, text="Select <SQLite_Name>_processed.sqlite", command=select_database).pack()
-    label_db = Label(root, text="No database selected", wraplength=700)
-    label_db.pack(pady=5)
-
-    Label(root, text="Animal ID").pack()
-    entry_animal = Entry(root); entry_animal.insert(0, "1"); entry_animal.pack()
-
-    Label(root, text="Nest X Minimum").pack()
-    entry_nest_xmin = Entry(root); entry_nest_xmin.insert(0, "100"); entry_nest_xmin.pack()
-
-    Label(root, text="Nest X Maximum").pack()
-    entry_nest_xmax = Entry(root); entry_nest_xmax.insert(0, "250"); entry_nest_xmax.pack()
-
-    Label(root, text="Nest Y Minimum").pack()
-    entry_nest_ymin = Entry(root); entry_nest_ymin.insert(0, "50"); entry_nest_ymin.pack()
-
-    Label(root, text="Nest Y Maximum").pack()
-    entry_nest_ymax = Entry(root); entry_nest_ymax.insert(0, "200"); entry_nest_ymax.pack()
-
-    Label(root, text="Buffer X Minimum").pack()
-    entry_buffer_xmin = Entry(root); entry_buffer_xmin.insert(0, "80"); entry_buffer_xmin.pack()
-
-    Label(root, text="Buffer X Maximum").pack()
-    entry_buffer_xmax = Entry(root); entry_buffer_xmax.insert(0, "270"); entry_buffer_xmax.pack()
-
-    Label(root, text="Buffer Y Minimum").pack()
-    entry_buffer_ymin = Entry(root); entry_buffer_ymin.insert(0, "30"); entry_buffer_ymin.pack()
-
-    Label(root, text="Buffer Y Maximum").pack()
-    entry_buffer_ymax = Entry(root); entry_buffer_ymax.insert(0, "220"); entry_buffer_ymax.pack()
-
-    Button(root, text="Select Output Folder", command=select_output_folder).pack(pady=10)
-    label_output = Label(root, text="No output folder selected", wraplength=700)
-    label_output.pack()
-
-    Button(root, text="RUN ANALYSIS", command=start, bg="green", fg="white", width=25, height=2).pack(pady=20)
-
-    root.mainloop()
+    sys.exit(main())

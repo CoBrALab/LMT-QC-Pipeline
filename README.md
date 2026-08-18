@@ -44,12 +44,21 @@ exact dependency versions pinned in `uv.lock` (numpy, pandas, opencv-python,
 Pillow) into a local `.venv/`.
 
 **Run any script:**
+
+Scripts 0, 1, and 3 are pure command-line tools; every input is a CLI
+argument/flag (run with `--help` for the full list):
 ```bash
-uv run python 0.Preprocessing.py
-uv run python 1.lmt_gap_fill.py
-uv run python 2.lmt_binary_search.py
-uv run python 3.lmt_qc_sampler.py
-uv run python 4.lmt_qc_validator.py
+uv run python 0.Preprocessing.py -i RAW.sqlite -o OUT_DIR
+uv run python 1.lmt_gap_fill.py -i RAW_processed.sqlite -o OUT_DIR --animal-id 1
+uv run python 3.lmt_qc_sampler.py -i lmt_binary_search_A1_....sqlite -v video_t0.mp4 [video_t1.mp4 ...] -o OUT_DIR
+```
+Scripts 2 and 4 take their file/video/folder inputs as CLI arguments too,
+but still open a GUI window for the genuinely interactive part (the
+binary-search/checkpoint review in script 2, and manual QC labeling in
+script 4):
+```bash
+uv run python 2.lmt_binary_search.py -i lmt_gap_fill_A1_....sqlite -v video_t0.mp4 [video_t1.mp4 ...] -o OUT_DIR
+uv run python 4.lmt_qc_validator.py -i lmt_qc_sampler_DETECTED_A1_....sqlite -o SCREENSHOT_DIR [-v video_t0.mp4 ...]
 ```
 `uv run` automatically ensures the environment is in sync with `uv.lock`
 before launching, so there's no separate "activate the venv" step.
@@ -62,11 +71,14 @@ uv lock --upgrade       # refresh pinned versions in uv.lock
 Both commands update `pyproject.toml`/`uv.lock` together — commit both
 files afterward.
 
-**Note on `tkinter`:** every script has a GUI, so it needs a graphical
-display (X11, Wayland, macOS, or Windows) to run. Headless/server
-environments cannot launch these scripts, independent of the uv setup
-above. uv's managed Python build already bundles Tcl/Tk, so no separate
-system `python3-tk` package install is required.
+**Note on `tkinter`:** scripts 0, 1, and 3 are pure command-line tools and
+have no GUI at all — they run fine on a headless/server environment.
+Scripts 2 and 4 take their setup inputs as CLI arguments but still open a
+GUI window for their genuinely interactive step (binary-search/checkpoint
+review, and manual QC labeling, respectively), so they still need a
+graphical display (X11, Wayland, macOS, or Windows) to run. uv's managed
+Python build already bundles Tcl/Tk, so no separate system `python3-tk`
+package install is required for the two scripts that still need it.
 
 ---
 
@@ -90,7 +102,7 @@ table where:
 FRONT_X = -1
 ```
 
-After deletion, it runs `VACUUM INTO` to reclaim the disk space freed by the
+After deletion, it runs `VACUUM` to reclaim the disk space freed by the
 deleted rows (SQLite does not shrink a database file automatically after a
 `DELETE`; the file only shrinks once `VACUUM` rewrites it).
 
@@ -118,10 +130,12 @@ inspected by this script.
 | `{original_name}_processed.sqlite` | SQLite database | Cleaned input for `1.lmt_gap_fill.py`. |
 
 ### Processing Steps
-1. **Select input and output** via the GUI file/folder dialogs.
+1. **Select input and output** via CLI arguments (`-i/--input`,
+   `-o/--output-folder`).
 2. **Overwrite check** if `{original_name}_processed.sqlite` already exists
-   in the output folder, ask the user to confirm before overwriting it,
-   rather than silently replacing a previous run's output.
+   in the output folder, the script aborts with a clear error unless
+   `--overwrite` was passed, rather than silently replacing a previous
+   run's output.
 3. **Copy the file** with `shutil.copy2`, a single filesystem-level copy,
    rather than reading and rewriting rows in Python. This is both far
    faster and guarantees every table/column the script doesn't know about
@@ -134,7 +148,7 @@ inspected by this script.
 6. **Validate the invalidity assumption** by checking whether every row with
    `FRONT_X = -1` also has `FRONT_Y`, `FRONT_Z`, `BACK_X`, `BACK_Y`, and
    `BACK_Z` all equal to `-1`. If any row violates this, the mismatch count
-   is reported and the user is asked whether to proceed anyway; the
+   is reported and the script aborts unless `--force` was passed; the
    deletion filter itself always remains `FRONT_X = -1`.
 7. **Delete in bulk** with a single `DELETE ... WHERE FRONT_X = -1`
    statement, a set-based SQL operation rather than a per-row Python loop,
@@ -154,19 +168,19 @@ inspected by this script.
   undetected frame. 
 - **All database work is wrapped in `try`/`except`/`finally`** so the SQLite
   connection is always closed, even if a step fails partway through, and so
-  a failure produces a readable error dialog instead of a console traceback.
+  a failure produces a readable error message on stderr (with a non-zero
+  exit code) instead of a raw console traceback.
 
 ### Open Source Notes
-- **External dependencies**: `tkinter` (GUI; may require the `python3-tk`
-  system package on some Linux distributions). No third-party pip packages.
-- **Standard library**: `os`, `shutil`, `sqlite3`, `time`.
+- **External dependencies**: none (pure standard library; no GUI toolkit).
+- **Standard library**: `argparse`, `os`, `shutil`, `sqlite3`, `sys`, `time`.
 - **Configuration files / environment variables**: none.
 - **Expected directory structure**: none required; input file and output
-  folder are chosen interactively.
-- **Platform assumptions**: requires a desktop environment capable of
-  displaying a Tkinter window (not headless-safe). `VACUUM` runs
-  synchronously on the GUI thread, so the window may appear unresponsive
-  during this step on very large databases.
+  folder are given as CLI arguments.
+- **Platform assumptions**: none — fully headless, runs on any environment
+  with Python (no display required). `VACUUM` runs synchronously on the
+  main thread, so the process may appear unresponsive during this step on
+  very large databases.
 
 ---
 
@@ -286,14 +300,14 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
 
 ### Open Source Notes
 - **External dependencies**: `pandas`, `numpy` (used for the vectorized
-  gap-fill computation), `tkinter`.
-- **Standard library**: `os`, `sqlite3`, `datetime`.
+  gap-fill computation).
+- **Standard library**: `argparse`, `os`, `sqlite3`, `sys`, `datetime`.
 - **Configuration files / environment variables**: none; animal ID and ROI
-  bounds are entered via the GUI at runtime.
+  bounds are CLI arguments (`--animal-id`, `--nest-*`, `--buffer-*`), each
+  with a default matching the old GUI's pre-filled value.
 - **Expected directory structure**: none required beyond a writable output
   folder.
-- **Platform assumptions**: requires Tkinter GUI support (not
-  headless-safe).
+- **Platform assumptions**: none — fully headless, no GUI toolkit is used.
 
 ---
 
@@ -520,8 +534,11 @@ inconsistencies.
 ### Open Source Notes
 - **External dependencies**: `opencv-python` (`cv2`), `numpy`, `pandas`,
   `Pillow` (`PIL.Image`, `PIL.ImageTk`), `tkinter`.
-- **Standard library**: `os`, `re`, `copy`, `sqlite3`, `datetime`, `time`.
-- **Configuration files / environment variables**: none; all thresholds
+- **Standard library**: `argparse`, `os`, `re`, `copy`, `sqlite3`, `sys`,
+  `datetime`, `time`.
+- **Configuration files / environment variables**: none; database, video(s),
+  and output folder are CLI arguments (`-i/--input`, `-v/--videos`,
+  `-o/--output-folder`); all thresholds
   (`MIN_GAP_DURATION_FOR_BINARY_SEARCH = 30s`,
   `FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES = 1 min`,
   `TYPE00_REVIEW_INTERVAL_SECONDS = 60s`, `DB_FPS`, `FRAME_CONVERSION`,
@@ -529,11 +546,14 @@ inconsistencies.
 - **Expected directory structure**: none required beyond a writable output
   folder (`_binsearch_tmp` is created automatically and cleaned up
   automatically, including on early window close).
-- **Platform assumptions**: requires Tkinter + a working OpenCV video
-  backend; not headless-safe. Video codec support depends on the local
-  OpenCV build. Because video files are cached open for the review session,
-  reviewing a very large number of distinct video files in one sitting
-  could approach a platform's open-file-handle limit.
+- **Platform assumptions**: CLI argument parsing and input validation are
+  headless (no display needed to see a `--help` message or an invalid-path
+  error), but the review step itself still requires Tkinter + a working
+  OpenCV video backend once setup succeeds; not headless-safe end-to-end.
+  Video codec support depends on the local OpenCV build. Because video
+  files are cached open for the review session, reviewing a very large
+  number of distinct video files in one sitting could approach a
+  platform's open-file-handle limit.
 
 ---
 
@@ -563,8 +583,9 @@ for manual review.
 | `lmt_binary_search_<YYYY-MM-DD_HH-MM-SS>.sqlite` (script 2 output) | SQLite database, table `GAP_FILL_ANALYSIS` | Fully classified per-frame data to draw QC samples from. |
 | LMT video files (`*.mp4`) | Video | Source of the screenshot images for each sampled frame. |
 | Output folder | Directory | Where per-pool results are written. |
+| Animal ID | Integer | Recorded alongside each sample. |
 | Sample count | Integer | Applied independently to each selected pool. |
-| QC pool selection | Checkboxes | Any of `DETECTED`, `BINARY_SEARCH`, `LOGIC` rows. |
+| QC pool selection | List (0 or more of `DETECTED`/`BINARY_SEARCH`/`LOGIC`) | Any of `DETECTED`, `BINARY_SEARCH`, `LOGIC` rows. |
 
 ### Outputs
 
@@ -580,7 +601,7 @@ Per selected pool, written to `output_folder/{qc_mode}_{timestamp}/`:
 | Column | Meaning |
 |---|---|
 | `sample_id` | 1-based counter, also embedded in the screenshot filename. |
-| `animal_id` | Animal ID extracted from database. |
+| `animal_id` | Animal ID entered by the user. |
 | `video` | Basename of the video the screenshot came from. |
 | `frame_global` | The actual (possibly nearest-neighbor-resolved) frame captured. |
 | `requested_frame` | The originally sampled `FRAMENUMBER`, before any resolution. |
@@ -592,11 +613,12 @@ Per selected pool, written to `output_folder/{qc_mode}_{timestamp}/`:
 | `QC_MODE` | Which pool this row belongs to (`"DETECTED"` / `"BINARY_SEARCH"` / `"LOGIC"`). |
 
 ### Processing Steps
-1. **Configure the run** via the GUI: source database, videos, output
-   folder, sample size, and which pools to draw from.
+1. **Configure the run** via CLI arguments: source database, videos, output
+   folder, sample size, and which pools to draw from. (Animal ID is not a
+   user-supplied input here — see the README/code discrepancy note below.)
 2. **Guard existing output.** If a pool's output folder for today's date
-   already contains files (e.g. from an earlier run), ask for confirmation
-   before continuing rather than silently overwriting.
+   already contains files (e.g. from an earlier run), abort with a clear
+   error unless `--overwrite` was passed, rather than silently overwriting.
 3. **Detect the source schema.** Whether the file has the modern
    `FILL_SOURCE` column, a legacy `BINARY_SEARCH` flag, or neither, and
    load `GAP_FILL_ANALYSIS` (or the legacy `ASSUMED_FRAMES` table)
@@ -611,13 +633,12 @@ Per selected pool, written to `output_folder/{qc_mode}_{timestamp}/`:
 5. **Draw a random sample**, bounded to the pool's actual size, using an
    explicit, freshly-generated random seed that is reported back to the
    user, the draw is still effectively random every run, but the exact
-   sample can be reproduced later if the seed is recorded. Samples extracted
-   are proportional to gap size.
-7. **Resolve and extract a screenshot for every sampled frame**, using the
+   sample can be reproduced later if the seed is recorded.
+6. **Resolve and extract a screenshot for every sampled frame**, using the
    same nearest-available-frame strategy as script 2, recording both the
    requested and resolved frame numbers so a reviewer can see whether (and
    how far) a substitution was made.
-8. **Write the pool's SQLite table and screenshot folder**, and report a
+7. **Write the pool's SQLite table and screenshot folder**, and report a
    per-pool summary including the sampling seed used.
 
 ### Key Design Decisions & Assumptions
@@ -647,14 +668,18 @@ Per selected pool, written to `output_folder/{qc_mode}_{timestamp}/`:
   mixed-mode file.
 
 ### Open Source Notes
-- **External dependencies**: `opencv-python` (`cv2`), `pandas`, `tkinter`.
-- **Standard library**: `os`, `re`, `random`, `sqlite3`, `datetime`.
-- **Configuration files / environment variables**: none; `DB_FPS`,
-  `FRAME_CONVERSION`, `FPS_TOLERANCE`, and the three `QC_MODE_*` constants
-  are hardcoded and duplicated from `2.lmt_binary_search.py`.
+- **External dependencies**: `opencv-python` (`cv2`), `pandas`.
+- **Standard library**: `argparse`, `os`, `re`, `random`, `sys`, `sqlite3`,
+  `datetime`.
+- **Configuration files / environment variables**: none; database,
+  video(s), output folder, sample size, and pool selection are CLI
+  arguments (`-i/--input`, `-v/--videos`, `-o/--output-folder`,
+  `-n/--samples`, `--pools`); `DB_FPS`, `FRAME_CONVERSION`, `FPS_TOLERANCE`,
+  and the three `QC_MODE_*` constants are hardcoded and duplicated from
+  `2.lmt_binary_search.py`.
 - **Expected directory structure**: creates
   `{output_folder}/{qc_mode}_{timestamp}/Screenshots/` automatically.
-- **Platform assumptions**: requires Tkinter + OpenCV; not headless-safe.
+- **Platform assumptions**: none — fully headless, no GUI toolkit is used.
 
 ---
 
@@ -759,17 +784,22 @@ Columns are identical to script 3's output table, plus:
 ### Open Source Notes
 - **External dependencies**: `opencv-python` (`cv2`), `pandas`, `Pillow`
   (`PIL.Image`, `PIL.ImageTk`), `tkinter`.
-- **Standard library**: `os`, `re`, `sqlite3`, `datetime`, `tempfile`,
-  `uuid`.
-- **Configuration files / environment variables**: none; `DB_FPS`,
-  `FRAME_CONVERSION`, `FPS_TOLERANCE`, and QC mode constants are hardcoded
-  and duplicated from `2.lmt_binary_search.py` / `3.lmt_qc_sampler.py`.
+- **Standard library**: `argparse`, `os`, `re`, `sys`, `sqlite3`, `datetime`,
+  `tempfile`, `uuid`.
+- **Configuration files / environment variables**: none; database, optional
+  video(s), and screenshot folder are CLI arguments (`-i/--input`,
+  `-v/--videos`, `-o/--screenshot-folder`); `DB_FPS`, `FRAME_CONVERSION`,
+  `FPS_TOLERANCE`, and QC mode constants are hardcoded and duplicated from
+  `2.lmt_binary_search.py` / `3.lmt_qc_sampler.py`.
 - **Expected directory structure**: expects the screenshot folder produced
   by `3.lmt_qc_sampler.py`.
-- **Platform assumptions**: requires Tkinter + OpenCV; uses the OS temp
-  directory for scratch boundary-frame images (always cleaned up, including
-  on error); not headless-safe. Video files are cached open for the
-  session and released when the window is closed.
+- **Platform assumptions**: CLI argument parsing and input validation are
+  headless (no display needed to see a `--help` message or an invalid-path
+  error), but the manual labeling step itself still requires Tkinter +
+  OpenCV once setup succeeds; not headless-safe end-to-end. Uses the OS
+  temp directory for scratch boundary-frame images (always cleaned up,
+  including on error). Video files are cached open for the session and
+  released when the window is closed.
 
 ---
 ## Script: `lmt_common.py`
@@ -836,15 +866,15 @@ No video files, SQLite databases, or GUI interaction are required, the suite run
 ### Key Design Decisions & Assumptions
 - Scripts are loaded by file path, not imported normally. The pipeline's numerically-prefixed filenames (1.lmt_gap_fill.py, etc.) aren't valid Python module names, so tests/conftest.py loads them via importlib.util.spec_from_file_location rather than a standard import statement.
 - The repo root is added to sys.path for the duration of the test session. A script loaded this way still needs its own top-level imports (e.g. 2.lmt_binary_search.py's from lmt_common import ...) to resolve; python script.py gets this for free by putting the script's own directory on sys.path automatically, but importlib-based loading does not, so conftest.py does it explicitly.
-- 1.lmt_gap_fill.py, 3.lmt_qc_sampler.py, and 4.lmt_qc_validator.py guard their GUI bootstrap behind if __name__ == "__main__":. This is required for these files to be importable at all without opening a live Tkinter window; 2.lmt_binary_search.py already followed this pattern. Interactive behavior (uv run python <script>.py) is unchanged by this guard.
-- The gap-fill vectorization test re-implements the core ROI/gap-expansion logic inline (tests/test_gap_fill_logic.py's _run_core_logic helper) rather than calling run_analysis() directly, since that function also performs DB I/O and GUI dialog calls not relevant to the logic under test.
+- 1.lmt_gap_fill.py and 3.lmt_qc_sampler.py guard their CLI entry point (argparse parsing + execution) behind `if __name__ == "__main__":`, and 4.lmt_qc_validator.py guards its GUI bootstrap the same way. This is required for these files to be importable at all without triggering `argparse`'s `sys.exit()` (scripts 1 and 3) or opening a live Tkinter window (script 4); 2.lmt_binary_search.py already followed this pattern. Interactive/CLI behavior (`uv run python <script>.py ...`) is unchanged by this guard.
+- The gap-fill vectorization test re-implements the core ROI/gap-expansion logic inline (tests/test_gap_fill_logic.py's _run_core_logic helper) rather than calling run_analysis() directly, since that function also performs DB I/O not relevant to the logic under test.
 
 ### Do NOT Modify
 - tests/conftest.py's sys.path insertion: removing it will reintroduce ModuleNotFoundError: lmt_common for any test that loads 2.lmt_binary_search.py.
-- The __main__ guards added to 1.lmt_gap_fill.py, 3.lmt_qc_sampler.py, and 4.lmt_qc_validator.py, removing them breaks headless test loading for those scripts (and, for any future test added against them, would open a GUI window during pytest collection).
+- The __main__ guards in 1.lmt_gap_fill.py, 3.lmt_qc_sampler.py, and 4.lmt_qc_validator.py, removing them breaks headless test loading for those scripts (and, for any future test added against them, would trigger CLI argument parsing or open a GUI window during pytest collection).
   
 ### Open Source Notes
 - External dependencies: pytest>=8.0.0 (dev dependency only, not required to run the pipeline itself).
 - Standard library: importlib.util, pathlib, sys.
 - Configuration files: pyproject.toml's [dependency-groups] dev section.
-- Platform assumptions: none beyond what the pipeline scripts themselves require. The suite is fully headless and does not depend on a display server, video codec support, or a live SQLite file.
+- Platform assumptions: none beyond what the pipeline scripts themselves require. The suite is fully headless and does not depend on a display server, video codec support, or a live SQLite file

@@ -11,7 +11,7 @@ import pandas as pd
 from datetime import datetime
 import time
 from tkinter import *
-from tkinter import filedialog, messagebox
+from tkinter import messagebox
 from PIL import Image, ImageTk
 
 MIN_GAP_DURATION_FOR_BINARY_SEARCH = 30  # seconds
@@ -672,14 +672,14 @@ def write_summary_report(report_path, source_db_path,
 # Main GUI class
 class BinarySearchGUI:
 
-    def __init__(self, root):
+    def __init__(self, root, db_path, video_paths, output_folder):
         self.root = root
         self.root.title("LMT Binary Search Gap Filler")
         self.root.geometry("1600x950")
 
-        self.db_path           = ""
-        self.output_folder     = ""
-        self.video_paths       = []
+        self.db_path           = db_path
+        self.output_folder     = output_folder
+        self.video_paths       = list(video_paths)
         self.video_map         = []
 
         self.df                = None
@@ -716,51 +716,13 @@ class BinarySearchGUI:
         # happened inside _finish()).
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        self._build_setup_ui()
-
-    # Setup screen
-    def _build_setup_ui(self):
-        self.setup_frame = Frame(self.root)
-        self.setup_frame.pack(fill=BOTH, expand=True, padx=20, pady=20)
-
-        Label(self.setup_frame, text="LMT Binary Search Gap Filler", font=("Arial", 16, "bold")).pack(pady=10)
-
-        Label(self.setup_frame, text=(f"Fills ASSUMED frames where IN_NEST = -1 using boundary-aware binary search.\n  \u2022 Type 00 (out \u2192 out): checkpoint review every {TYPE00_REVIEW_INTERVAL_SECONDS}s if above {MIN_GAP_DURATION_FOR_BINARY_SEARCH}s, else skipped\n  \u2022 Type 01 (out \u2192 in): inverse binary search for nest entry\n  \u2022 Type 10 (in \u2192 out): standard binary search for nest exit\n  \u2022 Type 11 (in \u2192 in): skipped, 1.lmt_gap_fill.py should have logic-filled these\n  \u2022 Gaps \u2264 {MIN_GAP_DURATION_FOR_BINARY_SEARCH}s: also skipped\n\nEach gap shows:  LEFT = last detected before gap  |  CENTER = frame under review  |  RIGHT = first detected after gap\n\nKeyboard:  A = IN NEST    D = OUT OF NEST    \u2190 = Undo    \u2192 = Redo"),font=("Arial", 11), justify=LEFT).pack(pady=10)
-
-        Button(self.setup_frame, text= "Select lmt_gap_fill__A<animal_id>_<timestamp>.sqlite", command=self._select_db).pack(pady=5)
-        self.lbl_db = Label(self.setup_frame, text="No database selected", wraplength=1000)
-        self.lbl_db.pack()
-
-        Button(self.setup_frame, text="Select LMT Videos", command=self._select_videos).pack(pady=5)
-        self.lbl_vid = Label(self.setup_frame, text="No videos selected")
-        self.lbl_vid.pack()
-
-        Button(self.setup_frame, text="Select Output Folder", command=self._select_output).pack(pady=5)
-        self.lbl_out = Label(self.setup_frame, text="No output folder selected", wraplength=1000)
-        self.lbl_out.pack()
-
-        Button(self.setup_frame, text="START BINARY SEARCH", command=self._start, bg="green", fg="white", width=30, height=2).pack(pady=20)
-
-    def _select_db(self):
-        self.db_path = filedialog.askopenfilename(filetypes=[("SQLite Database", "*.sqlite")])
-        self.lbl_db.config(text=self.db_path)
-
-    def _select_videos(self):
-        self.video_paths = list(filedialog.askopenfilenames(filetypes=[("MP4 Video", "*.mp4")]))
-        self.lbl_vid.config(text=f"{len(self.video_paths)} video(s) selected")
-
-    def _select_output(self):
-        self.output_folder = filedialog.askdirectory()
-        self.lbl_out.config(text=self.output_folder)
+        # db_path/video_paths/output_folder are now supplied via CLI
+        # arguments (parsed and validated in __main__) instead of being
+        # collected through the GUI file-picker setup screen that used to
+        # live here.
+        self._start()
 
     def _start(self):
-        if not self.db_path:
-            messagebox.showerror("Error", "Please select the 1.lmt_gap_fill.py SQLite."); return
-        if not self.video_paths:
-            messagebox.showerror("Error", "Please select at least one LMT video."); return
-        if not self.output_folder:
-            messagebox.showerror("Error", "Please select an output folder."); return
-
         conn = sqlite3.connect(self.db_path)
         self.df_all = pd.read_sql_query("SELECT * FROM GAP_FILL_ANALYSIS ORDER BY FRAMENUMBER", conn)
         conn.close()
@@ -822,7 +784,6 @@ class BinarySearchGUI:
             return
 
         self._review_start_time = time.time()
-        self.setup_frame.pack_forget()
         self._build_qc_ui()
         self._load_next_task()
 
@@ -1305,9 +1266,55 @@ class BinarySearchGUI:
         messagebox.showinfo("Binary Search Complete", f"All gaps processed.\n\nTotal review time:               {seconds_to_hms(total_review_seconds)}\n\nBinary-search input frames:      {bs_input_total:,}\n  Routed to reviewer:            {len(searchable_frames):,}\n    - Reclassified IN NEST:      {bs_in_frames:,}\n    - Reclassified OUT OF NEST:  {bs_out_frames:,}\n    - Residual unknown:          {bs_unknown:,}\n  Skipped (\u2264 threshold):          {threshold_skipped:,}\n  Skipped (type-00):             {zz_skipped:,}\n  Skipped (type-11):             {ze_skipped:,}\n  Balance: {bs_in_frames+bs_out_frames+bs_unknown+threshold_skipped+zz_skipped+ze_skipped:,} {'== OK' if bs_in_frames+bs_out_frames+bs_unknown+threshold_skipped+zz_skipped+ze_skipped==bs_input_total else '!= MISMATCH'}\n\nRemaining IN_NEST = -1:          {neg_remaining:,}\n\nSQLite output:\n{out_sqlite}\n\nSummary report:\n{report_path}\n\nFeed the SQLite into 3.lmt_qc_sampler.py.")
         self.root.quit()
 
-# Entry point
+# CLI entry point
+def _build_arg_parser():
+    parser = argparse.ArgumentParser(
+        description=(
+            "LMT Binary Search Gap Filler: resolves ASSUMED frames where "
+            "IN_NEST = -1 (from 1.lmt_gap_fill.py output) via a "
+            "human-in-the-loop review (binary search for 01/10 gaps, "
+            "checkpoint sampling for above-threshold 00 gaps)."
+        )
+    )
+    parser.add_argument(
+        "-i", "--input", required=True,
+        help="Path to lmt_gap_fill_A<animal_id>_<timestamp>.sqlite "
+             "(1.lmt_gap_fill.py output).",
+    )
+    parser.add_argument(
+        "-v", "--videos", required=True, nargs="+",
+        help="One or more LMT video files (*.mp4).",
+    )
+    parser.add_argument(
+        "-o", "--output-folder", required=True,
+        help="Directory to write the resulting SQLite/report into.",
+    )
+    return parser
+
+
+def _validate_cli_args(args):
+    errors = []
+    if not os.path.isfile(args.input):
+        errors.append(f"Input SQLite not found: {args.input}")
+    missing_videos = [v for v in args.videos if not os.path.isfile(v)]
+    if missing_videos:
+        errors.append("Video file(s) not found:\n  " + "\n  ".join(missing_videos))
+    if not os.path.isdir(args.output_folder):
+        errors.append(f"Output folder not found: {args.output_folder}")
+    if errors:
+        for e in errors:
+            print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 if __name__ == "__main__":
+    import argparse
+    import sys
     from PIL import Image, ImageTk
+
+    cli_args = _build_arg_parser().parse_args()
+    _validate_cli_args(cli_args)
+
     root = Tk()
-    app  = BinarySearchGUI(root)
+    app  = BinarySearchGUI(root, cli_args.input, cli_args.videos, cli_args.output_folder)
     root.mainloop()

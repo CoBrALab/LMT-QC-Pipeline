@@ -15,45 +15,56 @@ Before deleting, the script verifies that the "FRONT_X = -1 implies all other
 position columns are -1" assumption actually holds for this file, and warns
 the user if it does not. It also refuses to silently overwrite an existing
 output file, and verifies the DETECTION table exists before doing any work.
+
+This is a pure command-line script (no GUI): every input that used to be
+collected via a Tkinter dialog is now a CLI argument/flag, and every
+confirmation that used to be a messagebox prompt is now a flag that must be
+passed explicitly to opt in (the default, unattended behavior is the same
+"no" a user would give at an interactive prompt: don't overwrite, don't
+proceed past a failed assumption check).
 """
 
+import argparse
 import os
 import shutil
 import sqlite3
+import sys
 import time
-import tkinter as tk
-from tkinter import filedialog, messagebox
 
-# GUI
 
-def browse_input():
-    filename = filedialog.askopenfilename(title="Select LMT Output SQLite", filetypes=[("SQLite Database", "*.sqlite *.db"), ("All Files", "*.*")])
-    if filename:
-        input_var.set(filename)
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Create a cleaned copy of an LMT Output SQLite by removing "
+                    "DETECTION rows where FRONT_X = -1."
+    )
+    parser.add_argument(
+        "-i", "--input", required=True,
+        help="Path to the LMT Output SQLite to clean.",
+    )
+    parser.add_argument(
+        "-o", "--output-folder", required=True,
+        help="Directory to write the cleaned copy into.",
+    )
+    parser.add_argument(
+        "--overwrite", action="store_true",
+        help="Overwrite the output file if it already exists. Without this "
+             "flag, the script aborts rather than overwriting a previous run.",
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Proceed with deletion even if some FRONT_X = -1 rows do not "
+             "also have FRONT_Y/FRONT_Z/BACK_X/BACK_Y/BACK_Z = -1. Without "
+             "this flag, the script aborts if that assumption doesn't hold.",
+    )
+    return parser.parse_args(argv)
 
-def browse_output():
-    folder = filedialog.askdirectory(title="Select Output Folder")
-    if folder:
-        output_var.set(folder)
 
-def start_processing():
-    input_db = input_var.get().strip()
-    output_folder = output_var.get().strip()
-
-    if not os.path.isfile(input_db):
-        messagebox.showerror("Error", "Please select a valid LMT Output SQLite.")
-        return
-
-    if not os.path.isdir(output_folder):
-        messagebox.showerror("Error", "Please select a valid Output Folder.")
-        return
-
-    root.destroy()
-    process_database(input_db, output_folder)
-
- 
 # Processing
-def process_database(input_db, output_folder):
+def process_database(input_db, output_folder, overwrite=False, force=False):
+    """
+    Returns 0 on success (including the no-op "nothing to delete" case),
+    1 on any failure or user-facing abort condition.
+    """
 
     basename = os.path.basename(input_db)
     name, ext = os.path.splitext(basename)
@@ -62,14 +73,14 @@ def process_database(input_db, output_folder):
 
     # Guard against silently overwriting a previous run's output.
     if os.path.exists(output_db):
-        overwrite = messagebox.askyesno(
-            "Output Already Exists",
-            f"The output file already exists:\n{output_db}\n\n"
-            f"Do you want to overwrite it?"
-        )
         if not overwrite:
-            print("Aborted: output file already exists and user chose not to overwrite.")
-            return
+            print(
+                f"ABORTED: output file already exists:\n{output_db}\n"
+                f"Pass --overwrite to overwrite it.",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"Output file already exists, overwriting (--overwrite given):\n{output_db}")
 
     conn = None
 
@@ -102,15 +113,15 @@ def process_database(input_db, output_folder):
             "SELECT name FROM sqlite_master WHERE type='table' AND name='DETECTION'"
         )
         if cur.fetchone() is None:
-            messagebox.showerror(
-                "Error",
-                f"The selected SQLite does not contain a DETECTION table.\n\n"
+            print(
+                f"ERROR: The selected SQLite does not contain a DETECTION table.\n\n"
                 f"File: {output_db}\n\n"
-                f"This does not look like a valid LMT Output SQLite."
+                f"This does not look like a valid LMT Output SQLite.",
+                file=sys.stderr,
             )
             conn.close()
             conn = None
-            return
+            return 1
 
         print("Counting rows to delete...")
 
@@ -129,7 +140,7 @@ def process_database(input_db, output_folder):
             print("No rows need deleting.")
             conn.close()
             conn = None
-            return
+            return 0
 
         # Validate the documented assumption: whenever FRONT_X = -1, the
         # other position columns should also be -1. Warn the user (with an
@@ -158,21 +169,21 @@ def process_database(input_db, output_folder):
             print(f"WARNING: {mismatched_rows:,} row(s) have FRONT_X = -1 but "
                   f"do NOT have all of FRONT_Y/FRONT_Z/BACK_X/BACK_Y/BACK_Z = -1.")
 
-            proceed = messagebox.askyesno(
-                "Assumption Check Failed",
-                f"{mismatched_rows:,} row(s) have FRONT_X = -1 but do not have "
-                f"FRONT_Y, FRONT_Z, BACK_X, BACK_Y, and BACK_Z all equal to -1 "
-                f"as well.\n\n"
-                f"This script deletes rows based on FRONT_X = -1 only. "
-                f"Proceeding will delete these rows too, even though some of "
-                f"their other position columns are not -1.\n\n"
-                f"Do you want to proceed anyway?"
-            )
-            if not proceed:
-                print("Aborted by user after assumption-check failure.")
+            if not force:
+                print(
+                    f"ABORTED: {mismatched_rows:,} row(s) have FRONT_X = -1 but do not have "
+                    f"FRONT_Y, FRONT_Z, BACK_X, BACK_Y, and BACK_Z all equal to -1 "
+                    f"as well.\n\n"
+                    f"This script deletes rows based on FRONT_X = -1 only. "
+                    f"Proceeding would delete these rows too, even though some of "
+                    f"their other position columns are not -1.\n\n"
+                    f"Pass --force to proceed anyway.",
+                    file=sys.stderr,
+                )
                 conn.close()
                 conn = None
-                return
+                return 1
+            print("Proceeding anyway (--force given).")
         else:
             print("Assumption verified: all FRONT_X = -1 rows also have "
                   "FRONT_Y/FRONT_Z/BACK_X/BACK_Y/BACK_Z = -1.")
@@ -244,9 +255,11 @@ def process_database(input_db, output_folder):
 
         print("=" * 60)
 
+        return 0
+
     except Exception as e:
-        messagebox.showerror("Error", f"Processing failed:\n\n{e}")
-        print(f"ERROR: Processing failed: {e}")
+        print(f"ERROR: Processing failed: {e}", file=sys.stderr)
+        return 1
 
     finally:
         if conn is not None:
@@ -256,27 +269,19 @@ def process_database(input_db, output_folder):
                 pass
 
 
-# Main GUI
-root = tk.Tk()
-root.title("Script0 - SQLite Cleanup")
+def main(argv=None):
+    args = parse_args(argv)
 
-input_var = tk.StringVar()
-output_var = tk.StringVar()
+    if not os.path.isfile(args.input):
+        print(f"ERROR: Please provide a valid LMT Output SQLite. Not found: {args.input}", file=sys.stderr)
+        return 1
 
-frame = tk.Frame(root, padx=15, pady=15)
-frame.pack()
+    if not os.path.isdir(args.output_folder):
+        print(f"ERROR: Please provide a valid output folder. Not found: {args.output_folder}", file=sys.stderr)
+        return 1
 
-# Input SQLite
-tk.Label(frame, text="LMT Output SQLite:").grid(row=0, column=0, sticky="w")
-tk.Entry(frame, width=60, textvariable=input_var).grid(row=1, column=0, padx=(0, 10))
-tk.Button(frame, text="Browse...", command=browse_input).grid(row=1, column=1)
+    return process_database(args.input, args.output_folder, overwrite=args.overwrite, force=args.force)
 
-# Output folder
-tk.Label(frame, text="Output Folder:").grid(row=2, column=0, sticky="w", pady=(15, 0))
-tk.Entry(frame, width=60, textvariable=output_var).grid(row=3, column=0, padx=(0, 10))
-tk.Button(frame, text="Browse...", command=browse_output).grid(row=3, column=1)
 
-# Start
-tk.Button(frame, text="Start Processing", command=start_processing, width=25).grid(row=4, column=0, columnspan=2, pady=20)
-
-root.mainloop()
+if __name__ == "__main__":
+    sys.exit(main())

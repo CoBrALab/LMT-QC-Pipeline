@@ -1,7 +1,9 @@
+import argparse
 import os
 import numpy as np
 import re
 import random
+import sys
 import cv2
 
 from lmt_common import (DB_FPS, FRAME_CONVERSION, QC_MODE_DETECTED, QC_MODE_BINARY_SEARCH, 
@@ -11,8 +13,6 @@ from lmt_common import (DB_FPS, FRAME_CONVERSION, QC_MODE_DETECTED, QC_MODE_BINA
 import sqlite3
 import pandas as pd
 from datetime import datetime
-from tkinter import *
-from tkinter import filedialog, messagebox
 
 def extract_frame(video_map, global_frame, out_path):
     """
@@ -129,7 +129,13 @@ def _load_animal_id(analysis_db):
     return int(stored_ids[0])
 
 # Main pipeline
-def run(analysis_db, video_paths, output_folder, n_samples, qc_mode):
+def run(analysis_db, video_paths, output_folder, n_samples, qc_mode, overwrite=False):
+    """
+    Returns (summary_str, warnings_list).
+
+    Raises Exception on any fatal error, including the "output already
+    exists" guard below when `overwrite` is not set.
+    """
     animal_id = _load_animal_id(analysis_db)
 
     timestamp     = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -139,15 +145,10 @@ def run(analysis_db, video_paths, output_folder, n_samples, qc_mode):
     # Guard against silently overwriting a previous run's screenshots/SQLite
     # for this pool + date (e.g. re-running the sampler twice in one day).
     if os.path.isdir(pool_folder) and os.listdir(pool_folder):
-        proceed = messagebox.askyesno(
-            "Output Already Exists",
-            f"The output folder already contains files:\n{pool_folder}\n\n"
-            f"Continuing will overwrite existing screenshots/SQLite in this folder.\n\n"
-            f"Do you want to continue?"
-        )
-        if not proceed:
+        if not overwrite:
             raise Exception(
-                f"Aborted: output folder already exists and contains files:\n{pool_folder}"
+                f"Aborted: output folder already exists and contains files:\n{pool_folder}\n"
+                f"Pass --overwrite to overwrite it."
             )
 
     os.makedirs(screenshot_folder, exist_ok=True)
@@ -203,9 +204,6 @@ def run(analysis_db, video_paths, output_folder, n_samples, qc_mode):
             f"Frame alignment for these videos may be inaccurate:\n\n"
             + "\n".join(fps_mismatches)
         )
-    if video_warnings:
-        messagebox.showwarning("Video Warnings", "\n\n".join(video_warnings))
-
     results = []
     counter = 1
 
@@ -254,7 +252,7 @@ def run(analysis_db, video_paths, output_folder, n_samples, qc_mode):
     pd.DataFrame(results).to_sql("QC_ASSUMED_SAMPLES", conn, if_exists="replace", index=False)
     conn.close()
 
-    return (
+    summary = (
         f"Pool: {mode_label}\n"
         f"  Available:  {total_available:,}\n"
         f"  Extracted:  {len(results):,}\n"
@@ -262,129 +260,95 @@ def run(analysis_db, video_paths, output_folder, n_samples, qc_mode):
         f"  SQLite:     {out_db}\n"
         f"  Folder:     {screenshot_folder}"
     )
+    return summary, video_warnings
 
-# GUI
-analysis_db = ""
-videos      = []
-out_folder  = ""
 
-def select_db():
-    global analysis_db
-    analysis_db = filedialog.askopenfilename(filetypes=[("SQLite", "*.sqlite")])
-    label_db.config(text=analysis_db)
+# CLI
+ALL_POOLS = [QC_MODE_DETECTED, QC_MODE_BINARY_SEARCH, QC_MODE_LOGIC]
 
-def select_videos():
-    global videos
-    videos = list(filedialog.askopenfilenames(filetypes=[("MP4", "*.mp4")]))
-    label_vid.config(text=f"{len(videos)} video(s) selected")
 
-def select_out():
-    global out_folder
-    out_folder = filedialog.askdirectory()
-    label_out.config(text=out_folder)
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="LMT Random QC Sampler: draws random QC samples from a "
+                    "2.lmt_binary_search.py output and extracts their "
+                    "screenshots for manual quality control."
+    )
+    parser.add_argument(
+        "-i", "--input", required=True,
+        help="Path to lmt_binary_search_A<animal_id>_<timestamp>.sqlite "
+             "(2.lmt_binary_search.py output).",
+    )
+    parser.add_argument(
+        "-v", "--videos", required=True, nargs="+",
+        help="One or more LMT video files (*.mp4).",
+    )
+    parser.add_argument(
+        "-o", "--output-folder", required=True,
+        help="Directory to write per-pool results into.",
+    )
+    parser.add_argument(
+        "-n", "--samples", type=int, default=100,
+        help="Number of samples to draw, applied independently per pool (default: 100).",
+    )
+    parser.add_argument(
+        "--pools", nargs="+", choices=ALL_POOLS, default=list(ALL_POOLS),
+        help="Which QC pool(s) to sample from (default: all three).",
+    )
+    parser.add_argument(
+        "--overwrite", action="store_true",
+        help="Overwrite a pool's output folder if it already contains files "
+             "from an earlier run today. Without this flag, that pool aborts.",
+    )
+    return parser.parse_args(argv)
 
-def start():
+
+def main(argv=None):
+    args = parse_args(argv)
+
+    if not os.path.isfile(args.input):
+        print(f"ERROR: Please provide a valid SQLite database. Not found: {args.input}", file=sys.stderr)
+        return 1
+    missing_videos = [v for v in args.videos if not os.path.isfile(v)]
+    if missing_videos:
+        print("ERROR: Video file(s) not found:\n  " + "\n  ".join(missing_videos), file=sys.stderr)
+        return 1
+    if not os.path.isdir(args.output_folder):
+        print(f"ERROR: Please provide a valid output folder. Not found: {args.output_folder}", file=sys.stderr)
+        return 1
+    if args.samples <= 0:
+        print("ERROR: --samples must be a positive integer.", file=sys.stderr)
+        return 1
+
+    summaries = []
+    errors    = []
     try:
-        if not analysis_db:
-            messagebox.showerror("Error", "Please select lmt_binary_search__A<animal_id>_<timestamp>.sqlite.")
-            return
-        if not videos:
-            messagebox.showerror("Error", "Please select at least one LMT video.")
-            return
-        if not out_folder:
-            messagebox.showerror("Error", "Please select an output folder.")
-            return
+        for qc_mode in args.pools:
+            try:
+                summary, warnings = run(
+                    args.input, args.videos, args.output_folder,
+                    args.samples, qc_mode, overwrite=args.overwrite,
+                )
+                summaries.append(summary)
+                for w in warnings:
+                    print(f"WARNING [{qc_mode}]: {w}", file=sys.stderr)
+            except Exception as e:
+                errors.append(f"{qc_mode}: {e}")
+    finally:
+        # Release any cached video handles opened during this run instead
+        # of leaving them open for the lifetime of the process.
+        _release_all_captures()
 
-        raw = entry_samples.get().strip()
-        if not raw.isdigit() or int(raw) <= 0:
-            messagebox.showerror(
-                "Error", "Number of samples must be a positive integer.")
-            return
-        n_samples = int(raw)
+    if summaries:
+        print("Random QC Sample Extraction Complete\n")
+        print(f"Samples per pool requested: {args.samples:,}\n")
+        print("\n\n".join(summaries))
+    if errors:
+        print("\nERRORS:", file=sys.stderr)
+        for e in errors:
+            print(f"  {e}", file=sys.stderr)
 
-        selected_pools = [
-            mode for mode, var in [
-                (QC_MODE_DETECTED,      var_detected),
-                (QC_MODE_BINARY_SEARCH, var_binary),
-                (QC_MODE_LOGIC,         var_logic),
-            ] if var.get()
-        ]
+    return 0 if summaries else 1
 
-        if not selected_pools:
-            messagebox.showerror("Error", "Please select at least one QC pool.")
-            return
-
-        summaries = []
-        errors    = []
-        try:
-            for qc_mode in selected_pools:
-                try:
-                    summary = run(analysis_db, videos, out_folder, n_samples, qc_mode)
-                    summaries.append(summary)
-                except Exception as e:
-                    errors.append(f"{qc_mode}: {e}")
-        finally:
-            # Release any cached video handles opened during this run instead
-            # of leaving them open for the lifetime of the application.
-            _release_all_captures()
-
-        msg = ""
-        if summaries:
-            msg += "Random QC Sample Extraction Complete\n\n"
-            msg += f"Samples per pool requested: {n_samples:,}\n\n"
-            msg += "\n\n".join(summaries)
-        if errors:
-            msg += "\n\nERRORS:\n" + "\n".join(errors)
-
-        messagebox.showinfo("Done", msg)
-
-    except Exception as e:
-        messagebox.showerror("Error", str(e))
 
 if __name__ == "__main__":
-    root = Tk()
-    root.title("LMT Random QC Sampler")
-    root.geometry("750x520")
-
-    Label(root, text="LMT Random QC Sampler",
-        font=("Arial", 16, "bold")).pack(pady=10)
-
-    Label(root,
-        text=("Randomly selects frames from the lmt_binary_search__A<animal_id>_<timestamp>.sqlite\n"
-            "and extracts their screenshots for manual quality control.\n\n"
-            "Select QC pool(s). Each type produces its own SQLite\n"
-            "and screenshot folder, labelled with the type and a shared timestamp."),
-        font=("Arial", 10), justify=CENTER).pack(pady=5)
-
-    Button(root, text="Select lmt_binary_search__A<animal_id>_<timestamp>.sqlite", command=select_db).pack(pady=5)
-    label_db = Label(root, text="No file selected", wraplength=700)
-    label_db.pack()
-
-    Button(root, text="Select LMT Videos", command=select_videos).pack(pady=5)
-    label_vid = Label(root, text="No videos selected")
-    label_vid.pack()
-
-    Button(root, text="Select Output Folder", command=select_out).pack(pady=5)
-    label_out = Label(root, text="No output folder selected", wraplength=700)
-    label_out.pack()
-
-    Label(root, text="How many samples would you like? (applied per pool)").pack(pady=(15, 2))
-    entry_samples = Entry(root)
-    entry_samples.insert(0, "100")
-    entry_samples.pack()
-
-    Label(root, text="Select QC pool(s):", font=("Arial", 11, "bold")).pack(pady=(14, 2))
-    pool_frame = Frame(root)
-    pool_frame.pack()
-
-    var_detected = BooleanVar(value=True)
-    var_binary   = BooleanVar(value=True)
-    var_logic    = BooleanVar(value=True)
-
-    Checkbutton(pool_frame, text="DETECTED rows", variable=var_detected, font=("Arial", 10)).grid(row=0, column=0, padx=15)
-    Checkbutton(pool_frame, text="BINARY_SEARCH rows", variable=var_binary, font=("Arial", 10)).grid(row=0, column=1, padx=15)
-    Checkbutton(pool_frame, text="LOGIC rows", variable=var_logic, font=("Arial", 10)).grid(row=0, column=2, padx=15)
-
-    Button(root, text="RUN SAMPLING", command=start, bg="green", fg="white", width=30, height=2).pack(pady=20)
-
-    root.mainloop()
+    sys.exit(main())
