@@ -19,7 +19,7 @@ process performed.
 
 ## Execution order
 
-1. `0.Preprocessing.py`: clean raw LMT SQLite (remove invalid detections).
+1. `0.Preprocessing.py`: clean raw LMT SQLite (deduplicate DETECTION rows).
 2. `1.lmt_gap_fill.py`: classify detected frames + logic-fill/flag gaps per animal.
 3. `2.lmt_binary_search.py`: human-in-the-loop resolution of ambiguous gaps via video.
 4. `3.lmt_qc_sampler.py`: draw random QC samples per pool + extract screenshots.
@@ -67,7 +67,7 @@ Both commands update `pyproject.toml`/`uv.lock` together — commit both
 files afterward.
 
 **Note on `tkinter`:** scripts 0, 1, and 3 are pure command-line tools and
-have no GUI at all, they run fine on a headless/server environment.
+have no GUI at all — they run fine on a headless/server environment.
 Scripts 2 and 4 take their setup inputs as CLI arguments but still open a
 GUI window for their genuinely interactive step (binary-search/checkpoint
 review, and manual QC labeling, respectively), so they still need a
@@ -80,7 +80,7 @@ package install is required for the two scripts that still need it.
 ## CLI Reference
 
 Every argument below is exactly as declared in each script's `argparse`
-parser (or, for script 2, `_build_arg_parser()`), run any script with
+parser (or, for script 2, `_build_arg_parser()`) — run any script with
 `--help` to see this same information from argparse directly.
 
 ### `0.Preprocessing.py`
@@ -97,11 +97,21 @@ parser (or, for script 2, `_build_arg_parser()`), run any script with
 | Argument | Default | Controls |
 |---|---|---|
 | `--overwrite` | off | Overwrite `{input_name}_processed.sqlite` if it already exists in the output folder. Without it, the script aborts rather than replacing a previous run's output. |
-| `--force` | off | Proceed with deletion even if some `FRONT_X = -1` rows don't also have `FRONT_Y`/`FRONT_Z`/`BACK_X`/`BACK_Y`/`BACK_Z` all equal to `-1`. Without it, the script aborts if that assumption doesn't hold for the file. |
+
+**Example:**
+```bash
+uv run python 0.Preprocessing.py -i raw.sqlite -o ./out --overwrite
+```
 
 ### `1.lmt_gap_fill.py`
 
-**Required:** 
+**Required — every one of the following, with no defaults.** Unlike the
+retired GUI (which pre-filled these), the CLI intentionally does not
+guess an animal ID or ROI/buffer coordinates for you: an unnoticed
+pre-filled value silently applied to the wrong animal or the wrong nest
+geometry would corrupt the in-nest time estimate without any indication
+something was wrong, so the script refuses to run until every one of
+these is supplied explicitly.
 
 | Argument | Type | Controls |
 |---|---|---|
@@ -117,7 +127,16 @@ parser (or, for script 2, `_build_arg_parser()`), run any script with
 | `--buffer-ymin` | float | Buffer ROI Y minimum. |
 | `--buffer-ymax` | float | Buffer ROI Y maximum. |
 
-**Optional:** none, every argument above is required.
+**Optional:** none — every argument above is required.
+
+**Example:**
+```bash
+uv run python 1.lmt_gap_fill.py \
+  -i raw_processed.sqlite -o ./out \
+  --animal-id 1 \
+  --nest-xmin 100 --nest-xmax 250 --nest-ymin 50 --nest-ymax 200 \
+  --buffer-xmin 80 --buffer-xmax 270 --buffer-ymin 30 --buffer-ymax 220
+```
 
 ### `2.lmt_binary_search.py`
 
@@ -129,7 +148,7 @@ parser (or, for script 2, `_build_arg_parser()`), run any script with
 | `-v`, `--videos` | one or more paths | LMT video file(s) (`*.mp4`) covering the gaps to review. |
 | `-o`, `--output-folder` | directory | Where the resulting SQLite/report is written. |
 
-**Optional:** none, these three are the only CLI arguments; everything
+**Optional:** none — these three are the only CLI arguments; everything
 else (thresholds, review interval, etc.) is a hardcoded module constant,
 unchanged by this issue.
 
@@ -172,21 +191,44 @@ unchanged by this issue.
 
 ### Overview
 This script exists to give every downstream script a single, well-defined
-notion of "a valid detection row." The raw LMT detector occasionally emits
-placeholder rows for a frame it could not track at all, marked with sentinel
-coordinate values rather than a real position. Every later script in this
-pipeline assumes it is
-working with genuinely observed positions, so this cleanup has to happen
-first, once, rather than being re-implemented as a filter in every other
-script.
+notion of "a valid detection row" for a given frame and animal. LMT's
+DETECTION export can contain duplicate or conflicting rows for the same
+(`FRAMENUMBER`, `ANIMALID`) pair; every later script in this pipeline
+assumes that pair is unique, so this cleanup has to happen first, once,
+rather than being re-implemented as a filter in every other script.
 
-The script creates a cleaned **copy** of a raw LMT Output SQLite database,
-it never modifies the original file, and removes rows from the `DETECTION`
-table where:
+**This script no longer removes rows based on `FRONT_X`/`FRONT_Y`/
+`FRONT_Z`/`BACK_X`/`BACK_Y`/`BACK_Z` being `-1`.** It previously did,
+on the assumption that a missing FRONT/BACK coordinate meant the row was
+unusable. QC testing across several real SQLite databases showed that
+assumption doesn't hold: a row can have `FRONT_*`/`BACK_*` all `-1` while
+still carrying an accurate, usable `MASS_X`/`MASS_Y` position, the
+coordinate pair this pipeline actually relies on throughout. Those rows
+are now kept unchanged; this script doesn't inspect the `FRONT_*`/
+`BACK_*` columns at all.
 
-```sql
-FRONT_X = -1
-```
+Instead, the script creates a cleaned **copy** of a raw LMT Output SQLite
+database (it never modifies the original file) and deduplicates the
+`DETECTION` table on (`FRAMENUMBER`, `ANIMALID`), the identity every
+downstream script assumes is unique for a single animal's timeline, using
+two rules:
+
+- **Case A - completely identical rows.** If two or more rows are
+  identical across every column (excluding a surrogate/auto-increment
+  primary key, if the table has one), the first occurrence — by original
+  row order — is kept, and the later identical rows are deleted.
+- **Case B - conflicting rows.** If two or more rows share the same
+  (`FRAMENUMBER`, `ANIMALID`) but disagree on some other column (e.g. two
+  different `MASS_X`/`MASS_Y` readings for the same frame and animal),
+  there is no principled way to pick a "correct" one, so **every** row in
+  that group is deleted, including what would have been the first
+  occurrence.
+
+This matters beyond just data cleanliness: `1.lmt_gap_fill.py`'s
+gap-detection logic assumes `FRAMENUMBER` strictly increases for a given
+animal (see Issue #5). A duplicate or out-of-order `FRAMENUMBER` silently
+corrupts that script's gap sizing and the resulting in-nest time estimate,
+without raising any error, unless this deduplication has already run.
 
 After deletion, it runs `VACUUM` to reclaim the disk space freed by the
 deleted rows (SQLite does not shrink a database file automatically after a
@@ -203,17 +245,17 @@ deleted rows (SQLite does not shrink a database file automatically after a
 
 | Column | Role |
 |---|---|
-| `FRONT_X` | Determines which rows are deleted (`FRONT_X = -1`). |
-| `FRONT_Y`, `FRONT_Z`, `BACK_X`, `BACK_Y`, `BACK_Z` | Used only to validate the assumption that a `FRONT_X = -1` row is *fully* invalid, not to decide deletion. |
+| `FRAMENUMBER`, `ANIMALID` | The identity pair deduplication groups on. Both are required to be present; the script errors out clearly if either is missing. |
+| Every other column (`MASS_X`, `MASS_Y`, `FRONT_*`, `BACK_*`, and any others the table happens to have) | Compared for row equality to distinguish Case A (identical) from Case B (conflicting), but never inspected for a specific value — this script no longer makes any deletion decision based on what a coordinate *is*, only on whether two rows for the same frame/animal *match*. A surrogate/auto-increment primary key column, if the table has one, is excluded from this comparison. |
 
-All other tables/columns in the source database are untouched and are not
+All other tables in the source database are untouched and are not
 inspected by this script.
 
 ### Outputs
 
 | Output | Type | Purpose |
 |---|---|---|
-| `{original_name}_processed.sqlite` | SQLite database | Cleaned input for `1.lmt_gap_fill.py`. |
+| `{original_name}_processed.sqlite` | SQLite database | Deduplicated input for `1.lmt_gap_fill.py`. |
 
 ### Processing Steps
 1. **Select input and output** via CLI arguments (`-i/--input`,
@@ -228,33 +270,54 @@ inspected by this script.
    is preserved byte-for-byte.
 4. **Verify the `DETECTION` table exists** in the copy before running any
    query against it, so a non-LMT or corrupted file produces a clear error
-   instead of a raw SQLite exception.
-5. **Count candidate rows** (`FRONT_X = -1`) so the run can report how many
-   rows will be affected, and exit early (no-op) if there are none.
-6. **Validate the invalidity assumption** by checking whether every row with
-   `FRONT_X = -1` also has `FRONT_Y`, `FRONT_Z`, `BACK_X`, `BACK_Y`, and
-   `BACK_Z` all equal to `-1`. If any row violates this, the mismatch count
-   is reported and the script aborts unless `--force` was passed; the
-   deletion filter itself always remains `FRONT_X = -1`.
-7. **Delete in bulk** with a single `DELETE ... WHERE FRONT_X = -1`
-   statement, a set-based SQL operation rather than a per-row Python loop,
-   which matters when a session has hundreds of thousands of frames.
-8. **`VACUUM`** to physically reclaim the freed space, via `VACUUM INTO` a
+   instead of a raw SQLite exception. Also verifies `FRAMENUMBER` and
+   `ANIMALID` are both present as columns.
+5. **Load every `DETECTION` row**, along with its `rowid` (SQLite's
+   implicit, insertion-order row identifier), so "first occurrence" in
+   Case A can be determined deterministically from the original file's
+   row order rather than an arbitrary in-memory order.
+6. **Group by (`FRAMENUMBER`, `ANIMALID`)** and, within each group with
+   more than one row, check whether every row is identical across all
+   non-primary-key columns. A fully-identical group is Case A (keep the
+   lowest-`rowid` row, delete the rest); a group with any disagreement is
+   Case B (delete every row in the group). Groups of size one are left
+   untouched.
+7. **Report counts** for each case (groups affected and rows removed), plus
+   up to 10 example (`FRAMENUMBER`, `ANIMALID`) pairs for Case B so a user
+   can investigate the conflicting source data if needed, and exit early
+   (no-op) if nothing needs deleting.
+8. **Delete in bulk** via a temporary table of row IDs to remove plus a
+   single `DELETE ... WHERE rowid IN (...)` statement, a set-based SQL
+   operation rather than a per-row Python loop, which matters when a
+   session has hundreds of thousands of frames.
+9. **`VACUUM`** to physically reclaim the freed space, via `VACUUM INTO` a
    sibling temp file followed by an atomic rename over the output file,
    rather than an in-place `VACUUM` (see Key Design Decisions below for
    why).
-9. **Report a timing summary** (copy / delete / vacuum durations) so a user
-   running this against a very large database understands where the time
-   went.
+10. **Report a timing summary** (copy / delete / vacuum durations) so a
+    user running this against a very large database understands where the
+    time went.
 
 ### Key Design Decisions & Assumptions
 - **Copy-then-modify, never mutate the source.** The original LMT database
   is treated as an immutable, re-runnable source of truth; every later stage
   operates on derived files, so a mistake anywhere downstream never requires
   re-exporting from LMT.
-- **`FRONT_X = -1` is the invalidity sentinel**, not a `NULL` or a separate
-  status column, this mirrors how the LMT detector itself flags an
-  undetected frame. 
+- **Deduplicate on identity (`FRAMENUMBER` + `ANIMALID`), not on any
+  coordinate value.** Earlier versions of this script deleted rows based
+  on `FRONT_X = -1`, treating a specific coordinate value as an invalidity
+  sentinel. That conflated "this row's FRONT/BACK tracking failed" with
+  "this row is unusable," which QC testing showed to be false: `MASS_X`/
+  `MASS_Y` — the values this pipeline is actually built on — can still be
+  accurate on such a row. Whether two rows for the same frame and animal
+  *agree* is a much safer signal than what either row's coordinates
+  happen to be.
+- **No arbitrary tie-breaking on conflicting data.** When two rows disagree
+  about the same (`FRAMENUMBER`, `ANIMALID`), there's no information in
+  this table that says which one is correct, so silently keeping one
+  (e.g. "first wins") would quietly inject wrong data into the timeline.
+  Deleting the whole group instead turns that frame into an ordinary gap,
+  which downstream scripts already have a principled way to handle.
 - **All database work is wrapped in `try`/`except`/`finally`** so the SQLite
   connection is always closed, even if a step fails partway through, and so
   a failure produces a readable error message on stderr (with a non-zero
@@ -270,8 +333,10 @@ inspected by this script.
   from the `DELETE` step is left in place rather than losing the run's
   result.
 
+
 ### Open Source Notes
-- **External dependencies**: none (pure standard library; no GUI toolkit).
+- **External dependencies**: `pandas` (used for the deduplication group-by
+  logic).
 - **Standard library**: `argparse`, `os`, `shutil`, `sqlite3`, `sys`, `time`.
 - **Configuration files / environment variables**: none.
 - **Expected directory structure**: none required; input file and output
@@ -346,6 +411,9 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
    distance between them. A distance of `1` means no gap. A distance greater
    than `1` means one or more frames went undetected in between a *gap*
    and every missing `FRAMENUMBER` in that range becomes an `ASSUMED` row.
+   A distance of `0` or less (a duplicate or out-of-order `FRAMENUMBER` for
+   this animal) is a defensive validation failure (Issue #5) rather than a
+   silently-accepted "no gap" — see Key Design Decisions below.
 4. **Decide each gap's fate using only its two endpoints** (this is the
    core heuristic, and the reason a human is not required for most gaps):
    - Test whether the animal was inside the **nest ROI** at the last frame
@@ -367,6 +435,17 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
    result to a new, timestamped SQLite file.
 
 ### Key Design Decisions & Assumptions
+- **Defensive uniqueness check, not a repeat of `0.Preprocessing.py`'s
+  deduplication (Issue #5).** This script assumes `FRAMENUMBER` strictly
+  increases for the animal it's processing; a duplicate or out-of-order
+  value would otherwise be silently treated as "no gap" (a `<= 0` distance
+  between consecutive frames), corrupting gap sizing and the in-nest time
+  estimate without any error. `0.Preprocessing.py`'s dedup on
+  (`FRAMENUMBER`, `ANIMALID`) is expected to make this invariant hold by
+  the time this script runs, so the check here should never actually
+  trigger in the normal pipeline order — it exists to fail loudly, rather
+  than corrupt results silently, if this script is ever run against data
+  that skipped that step.
 - **Two independent, asymmetric ROI tests, not one.** The buffer ROI is
   intentionally looser than the nest ROI. Requiring the *exit* point to only
   be within the wider buffer (rather than the strict nest box) tolerates
@@ -1008,17 +1087,18 @@ No video files, SQLite databases, or GUI interaction are required, the suite run
 - `tests/test_binary_search_logic.py` (2.lmt_binary_search.py): `classify_gap_type`, the generic `_check` helper (tested standalone with arbitrary values, not through an actual report/accounting call site), `build_initial_tasks`, `find_nearest_frame_candidates` (via `lmt_common.py`).
 - `tests/test_gap_fill_logic.py` (1.lmt_gap_fill.py): the gap-expansion and ROI-membership vectorization core.
 - `tests/test_type00_gap_review.py` (2.lmt_binary_search.py): `_build_type00_checkpoint_tasks`, the type-00 branch of `_handle_answer` (including the checkpoint-to-binary-search hand-off on the first IN answer), and Skip/Undo/Redo against type-00 tasks.
+- `tests/test_preprocessing_dedup.py` (0.Preprocessing.py, plus one end-to-end case into 1.lmt_gap_fill.py): `process_database`'s deduplication (Case A exact duplicates, Case B conflicting rows, distinct-`ANIMALID` rows left alone, `-1` `FRONT_*`/`BACK_*` rows no longer removed, a surrogate primary key excluded from identity comparison), the original file being left untouched, the overwrite guard, a missing `DETECTION` table, and `1.lmt_gap_fill.py`'s duplicate-`FRAMENUMBER` defensive check (Issue #5) both firing on raw non-deduplicated input and staying silent on deduplicated input. Runs against real temporary SQLite files (via `tmp_path`), not synthetic in-memory DataFrames, since deduplication is fundamentally a file-level operation.
 - **Not covered**: `write_summary_report`'s and `_finish`'s integrity/balance-check logic, any of the four scripts' CLI argument parsing, and the interactive Tkinter GUI code paths in scripts 2 and 4 (image display, button/keyboard callbacks wiring, window lifecycle).
   
 ### Key Design Decisions & Assumptions
 - Scripts are loaded by file path, not imported normally. The pipeline's numerically-prefixed filenames (1.lmt_gap_fill.py, etc.) aren't valid Python module names, so tests/conftest.py loads them via importlib.util.spec_from_file_location rather than a standard import statement.
 - The repo root is added to sys.path for the duration of the test session. A script loaded this way still needs its own top-level imports (e.g. 2.lmt_binary_search.py's from lmt_common import ...) to resolve; python script.py gets this for free by putting the script's own directory on sys.path automatically, but importlib-based loading does not, so conftest.py does it explicitly.
-- 1.lmt_gap_fill.py and 3.lmt_qc_sampler.py guard their CLI entry point (argparse parsing + execution) behind `if __name__ == "__main__":`, and 4.lmt_qc_validator.py guards its GUI bootstrap the same way. This is required for these files to be importable at all without triggering `argparse`'s `sys.exit()` (scripts 1 and 3) or opening a live Tkinter window (script 4); 2.lmt_binary_search.py already followed this pattern. Interactive/CLI behavior (`uv run python <script>.py ...`) is unchanged by this guard.
+- 1.lmt_gap_fill.py and 3.lmt_qc_sampler.py guard their CLI entry point (argparse parsing + execution) behind `if __name__ == "__main__":`, and 4.lmt_qc_validator.py guards its GUI bootstrap the same way; 0.Preprocessing.py and 2.lmt_binary_search.py already followed this pattern. This is required for these files to be importable at all without triggering `argparse`'s `sys.exit()` (scripts 0, 1, and 3) or opening a live Tkinter window (script 4). Interactive/CLI behavior (`uv run python <script>.py ...`) is unchanged by this guard.
 - The gap-fill vectorization test re-implements the core ROI/gap-expansion logic inline (tests/test_gap_fill_logic.py's _run_core_logic helper) rather than calling run_analysis() directly, since that function also performs DB I/O not relevant to the logic under test.
 
 ### Do NOT Modify
 - tests/conftest.py's sys.path insertion: removing it will reintroduce ModuleNotFoundError: lmt_common for any test that loads 2.lmt_binary_search.py.
-- The __main__ guards in 1.lmt_gap_fill.py, 3.lmt_qc_sampler.py, and 4.lmt_qc_validator.py, removing them breaks headless test loading for those scripts (and, for any future test added against them, would trigger CLI argument parsing or open a GUI window during pytest collection).
+- The __main__ guards in 0.Preprocessing.py, 1.lmt_gap_fill.py, 3.lmt_qc_sampler.py, and 4.lmt_qc_validator.py, removing them breaks headless test loading for those scripts (and, for any future test added against them, would trigger CLI argument parsing or open a GUI window during pytest collection).
   
 ### Open Source Notes
 - External dependencies: pytest>=8.0.0 (dev dependency only, not required to run the pipeline itself).
