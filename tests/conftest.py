@@ -35,3 +35,9 @@ def gap_fill_module():
     # Requires the __main__ guard added in this change; without it this
     # import attempts to open a Tk window.
     return _load_module("1.lmt_gap_fill.py", "lmt_gap_fill")
+
+
+@pytest.fixture(scope="session")
+def preprocessing_module():
+    # Safe to import directly: CLI entry point is __main__-guarded.
+    return _load_module("0.Preprocessing.py", "preprocessing")

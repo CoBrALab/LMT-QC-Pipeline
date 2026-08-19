@@ -442,7 +442,7 @@ def test_undo_redo_across_00_to_10_handoff(binary_search_module):
     assert all(gui.decisions.get(f) == 1 for f in range(1001, 2801))
 
 # Regression: unrecognized gap_type handling and normal Type 10 flow unaffected
-def test_fix6_still_raises_for_truly_unrecognized_gap_type(binary_search_module):
+def test_unrecognized_gap_type_still_raises(binary_search_module):
     m = binary_search_module
     gui = _new_gui(m)
     bad_task = _make_task(1, 1001, 6400, "99")  # not 00, 01, or 10
