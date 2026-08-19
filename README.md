@@ -99,11 +99,6 @@ parser (or, for script 2, `_build_arg_parser()`) — run any script with
 | `--overwrite` | off | Overwrite `{input_name}_processed.sqlite` if it already exists in the output folder. Without it, the script aborts rather than replacing a previous run's output. |
 | `--force` | off | Proceed with deletion even if some `FRONT_X = -1` rows don't also have `FRONT_Y`/`FRONT_Z`/`BACK_X`/`BACK_Y`/`BACK_Z` all equal to `-1`. Without it, the script aborts if that assumption doesn't hold for the file. |
 
-**Example:**
-```bash
-uv run python 0.Preprocessing.py -i raw.sqlite -o ./out --overwrite
-```
-
 ### `1.lmt_gap_fill.py`
 
 **Required — every one of the following, with no defaults.** Unlike the
@@ -130,15 +125,6 @@ these is supplied explicitly.
 
 **Optional:** none — every argument above is required.
 
-**Example:**
-```bash
-uv run python 1.lmt_gap_fill.py \
-  -i raw_processed.sqlite -o ./out \
-  --animal-id 1 \
-  --nest-xmin 100 --nest-xmax 250 --nest-ymin 50 --nest-ymax 200 \
-  --buffer-xmin 80 --buffer-xmax 270 --buffer-ymin 30 --buffer-ymax 220
-```
-
 ### `2.lmt_binary_search.py`
 
 **Required:**
@@ -152,16 +138,6 @@ uv run python 1.lmt_gap_fill.py \
 **Optional:** none — these three are the only CLI arguments; everything
 else (thresholds, review interval, etc.) is a hardcoded module constant,
 unchanged by this issue.
-
-**Example:**
-```bash
-uv run python 2.lmt_binary_search.py \
-  -i lmt_gap_fill_A1_....sqlite \
-  -v video_t0.mp4 video_t50000.mp4 \
-  -o ./out
-```
-This still opens the interactive binary-search/checkpoint-review GUI once
-the arguments above are validated.
 
 ### `3.lmt_qc_sampler.py`
 
@@ -181,15 +157,6 @@ the arguments above are validated.
 | `--pools` | all three (`DETECTED BINARY_SEARCH LOGIC`) | Which QC pool(s) to sample from; pass one or more of `DETECTED`, `BINARY_SEARCH`, `LOGIC`. |
 | `--overwrite` | off | Overwrite a pool's output folder if it already contains files from an earlier run today. Without it, that pool aborts. |
 
-**Example:**
-```bash
-uv run python 3.lmt_qc_sampler.py \
-  -i lmt_binary_search_A1_....sqlite \
-  -v video_t0.mp4 video_t50000.mp4 \
-  -o ./out \
-  -n 100 --pools DETECTED LOGIC
-```
-
 ### `4.lmt_qc_validator.py`
 
 **Required:**
@@ -204,16 +171,6 @@ uv run python 3.lmt_qc_sampler.py \
 | Argument | Default | Controls |
 |---|---|---|
 | `-v`, `--videos` | none (empty) | LMT video file(s) (`*.mp4`); when supplied, enables the three-panel before/QC-frame/after view for `BINARY_SEARCH`/`LOGIC`/legacy `ASSUMED`-mode samples. Not needed for `DETECTED`-mode samples, which show only the pre-extracted screenshot. |
-
-**Example:**
-```bash
-uv run python 4.lmt_qc_validator.py \
-  -i lmt_qc_sampler_DETECTED_A1_....sqlite \
-  -o ./out/DETECTED_A1_.../Screenshots \
-  -v video_t0.mp4
-```
-This still opens the interactive manual-QC-labeling GUI once the
-arguments above are validated.
 
 ---
 
