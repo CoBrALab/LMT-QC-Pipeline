@@ -1100,19 +1100,16 @@ class BinarySearchGUI:
             self.root.after(300, lambda t=token: self._deferred_advance(t))
 
         else:
-            # Fix 6: every task reaching _handle_answer should have
-            # gap_type GAP_TYPE_10, GAP_TYPE_01, or GAP_TYPE_00 --
-            # build_initial_tasks never queues type-11 gaps, and
-            # _make_subtask always copies gap_type unchanged from its
-            # parent. An unrecognized gap_type here means task/decision
-            # bookkeeping has gone wrong somewhere upstream. Previously
-            # this branch did nothing: no decision was written, no
-            # subtask was pushed, and no advance was scheduled -- the
-            # review would silently freeze on this frame with no error,
-            # and the frames in it would eventually surface as the same
-            # "unresolved" integrity failure at _finish(), with no
-            # indication of why. Fail loudly here instead, at the moment
-            # the inconsistency is discovered.
+            # Every task reaching _handle_answer should have gap_type
+            # GAP_TYPE_10, GAP_TYPE_01, or GAP_TYPE_00 -- build_initial_tasks
+            # never queues type-11 gaps, and _make_subtask always copies
+            # gap_type unchanged from its parent. An unrecognized gap_type
+            # here means task/decision bookkeeping has gone wrong somewhere
+            # upstream. Fail loudly here, at the moment the inconsistency is
+            # discovered, rather than doing nothing and letting the review
+            # silently freeze on this frame -- the frames in it would
+            # otherwise eventually surface as the same "unresolved"
+            # integrity failure at _finish(), with no indication of why.
             raise IntegrityError(
                 f"_handle_answer received a task with unrecognized "
                 f"gap_type {gtype!r} for gap_index {task['gap_index']} "
@@ -1122,8 +1119,8 @@ class BinarySearchGUI:
 
     def _handle_skip(self):
         """
-        Fix 5: an explicit "I cannot judge this" control. Unlike an answer,
-        this does not narrow the search -- it deliberately marks the whole
+        An explicit "I cannot judge this" control. Unlike an answer, this
+        does not narrow the search -- it deliberately marks the whole
         current segment UNKNOWN (-1) and stops searching it, recording the
         frames in self.explicitly_skipped_frames so _finish()'s integrity
         check (which exists to catch frames *accidentally* left without a
