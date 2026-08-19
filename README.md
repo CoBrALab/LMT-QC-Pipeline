@@ -67,7 +67,7 @@ Both commands update `pyproject.toml`/`uv.lock` together — commit both
 files afterward.
 
 **Note on `tkinter`:** scripts 0, 1, and 3 are pure command-line tools and
-have no GUI at all — they run fine on a headless/server environment.
+have no GUI at all, they run fine on a headless/server environment.
 Scripts 2 and 4 take their setup inputs as CLI arguments but still open a
 GUI window for their genuinely interactive step (binary-search/checkpoint
 review, and manual QC labeling, respectively), so they still need a
@@ -80,7 +80,7 @@ package install is required for the two scripts that still need it.
 ## CLI Reference
 
 Every argument below is exactly as declared in each script's `argparse`
-parser (or, for script 2, `_build_arg_parser()`) — run any script with
+parser (or, for script 2, `_build_arg_parser()`), run any script with
 `--help` to see this same information from argparse directly.
 
 ### `0.Preprocessing.py`
@@ -101,13 +101,7 @@ parser (or, for script 2, `_build_arg_parser()`) — run any script with
 
 ### `1.lmt_gap_fill.py`
 
-**Required — every one of the following, with no defaults.** Unlike the
-retired GUI (which pre-filled these), the CLI intentionally does not
-guess an animal ID or ROI/buffer coordinates for you: an unnoticed
-pre-filled value silently applied to the wrong animal or the wrong nest
-geometry would corrupt the in-nest time estimate without any indication
-something was wrong, so the script refuses to run until every one of
-these is supplied explicitly.
+**Required:** 
 
 | Argument | Type | Controls |
 |---|---|---|
@@ -123,7 +117,7 @@ these is supplied explicitly.
 | `--buffer-ymin` | float | Buffer ROI Y minimum. |
 | `--buffer-ymax` | float | Buffer ROI Y maximum. |
 
-**Optional:** none — every argument above is required.
+**Optional:** none, every argument above is required.
 
 ### `2.lmt_binary_search.py`
 
@@ -135,7 +129,7 @@ these is supplied explicitly.
 | `-v`, `--videos` | one or more paths | LMT video file(s) (`*.mp4`) covering the gaps to review. |
 | `-o`, `--output-folder` | directory | Where the resulting SQLite/report is written. |
 
-**Optional:** none — these three are the only CLI arguments; everything
+**Optional:** none, these three are the only CLI arguments; everything
 else (thresholds, review interval, etc.) is a hardcoded module constant,
 unchanged by this issue.
 
