@@ -82,32 +82,32 @@ def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_
 
         gap = f2 - f1
 
-        # NOTE: This validation is temporarily disabled.
-        # During processing of the 24-hour dataset (derived from the 48-hour dataset),
-        # this check flagged 183 cases where FRAMENUMBER values were duplicate or
-        # non-increasing. These appear to be data-quality issues rather than problems
-        # with the gap-detection logic.
-        #
-        # The issue has been communicated to collaborators. Until the source data is
-        # investigated and a decision is made on how these cases should be handled,
-        # processing will continue without raising an exception here.
-        #
-        # Re-enable the following lines of code once the underlying data issue has been resolved.
-        #
-        # Missing validation: consecutive detected frames for this animal must
-        # strictly increase. Duplicate or out-of-order FRAMENUMBER values would
-        # otherwise be silently treated as having "no gap" (gap > 1 is False),
-        # potentially masking data-quality problems.
-        #
-        # if np.any(gap <= 0):
-        #     bad_idx = np.nonzero(gap <= 0)[0]
-        #     examples = [(int(f1[i]), int(f2[i])) for i in bad_idx[:10]]
-        #     raise Exception(
-        #         f"Found {len(bad_idx):,} duplicate or non-increasing FRAMENUMBER "
-        #         f"pair(s) for Animal ID {animal_id} after ordering by FRAMENUMBER. "
-        #         f"This indicates duplicate or out-of-order detection rows.\n"
-        #         f"Example (FRAMENUMBER, next FRAMENUMBER) pairs: {examples}"
-        #     )
+        # Defensive validation (Issue #5): consecutive detected frames for
+        # this animal must strictly increase. This is no longer expected
+        # to ever fail for input produced by the current
+        # 0.Preprocessing.py, which deduplicates DETECTION on
+        # (FRAMENUMBER, ANIMALID) before this script ever runs -- so for a
+        # single ANIMALID, FRAMENUMBER is guaranteed unique and, combined
+        # with the ORDER BY FRAMENUMBER above, strictly increasing. This
+        # check exists for the case where that invariant doesn't hold
+        # (e.g. this script run directly against a raw, non-deduplicated
+        # LMT export): a duplicate or out-of-order FRAMENUMBER would
+        # otherwise be silently treated as having "no gap" (gap > 1 is
+        # False), corrupting gap sizing and the in-nest time estimate
+        # without any indication something was wrong. Fail loudly here
+        # instead.
+        if np.any(gap <= 0):
+            bad_idx = np.nonzero(gap <= 0)[0]
+            examples = [(int(f1[i]), int(f2[i])) for i in bad_idx[:10]]
+            raise Exception(
+                f"Found {len(bad_idx):,} duplicate or non-increasing FRAMENUMBER "
+                f"pair(s) for Animal ID {animal_id} after ordering by FRAMENUMBER. "
+                f"This indicates duplicate or out-of-order DETECTION rows for "
+                f"this animal, which 0.Preprocessing.py's deduplication should "
+                f"already have resolved -- re-run this animal's data through "
+                f"0.Preprocessing.py first.\n"
+                f"Example (FRAMENUMBER, next FRAMENUMBER) pairs: {examples}"
+            )
 
         in_nest_start = in_roi_vec(x1, y1, NEST)
         in_buffer_end = in_roi_vec(x2, y2, NEST_BUFFER)
