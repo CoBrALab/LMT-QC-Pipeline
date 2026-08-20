@@ -611,16 +611,35 @@ to resolve precisely.
 
 **4. Checkpoint-review the remaining `00` gaps.** Since there's no known
 transition to bisect toward, type-00 gaps aren't handled by binary search
-at all. Instead, above-threshold `00` gaps are sampled left-to-right at
-`TYPE00_REVIEW_INTERVAL_SECONDS` (default 60 seconds): starting from the
+from the start. Instead, above-threshold `00` gaps are sampled left-to-right
+at `TYPE00_REVIEW_INTERVAL_SECONDS` (default 60 seconds): starting from the
 gap's left edge, the reviewer is shown a frame every interval and asked
-whether the animal is in the nest, and each answer fills backward to the
-previous checkpoint (or the gap's start, for the first one). The final
-checkpoint always lands exactly on the gap's right edge regardless of
+whether the animal is in the nest. The final checkpoint in the precomputed
+sequence always lands exactly on the gap's right edge regardless of
 interval alignment, so that edge is always explicitly reviewed rather than
 extrapolated. A gap no longer than one interval gets a single checkpoint
-covering the whole gap. Unlike binary search, this is a flat, precomputed
-sequence (no recursive subdivision).
+covering the whole gap.
+
+Each checkpoint answer is handled one of two ways:
+
+- **OUT OF NEST** fills backward from the previous checkpoint (or the gap's
+  start, for the first one) with `0`, and checkpoint sampling continues to
+  the next checkpoint in the precomputed sequence.
+- **IN NEST** — the first checkpoint answered this way stops checkpoint
+  sampling for the gap immediately: any remaining precomputed checkpoints
+  for this gap are discarded, the sampled segment up to and including this
+  checkpoint is filled `1`, and the *rest* of the gap (from just after this
+  checkpoint through the gap's right edge, which is already known
+  out-of-nest) is handed off to a `10` (in-nest → out-of-nest) binary
+  search instead of continuing to sample every remaining interval. This
+  hand-off is possible because the checkpoint that was just answered IN
+  is now a known left boundary, turning the remainder of the gap into an
+  ordinary `10` sub-problem.
+
+Unlike a `01`/`10` binary search, the checkpoint sequence itself is flat and
+precomputed up front (no recursive subdivision), but on an IN answer, the
+gap's *remaining* portion switches to the same recursive binary-search
+mechanism used for `01`/`10` gaps (see step 5).
 
 **5. Binary search the remaining gaps.** This is the core algorithm, and it
 relies on one key assumption: **within a `01` or `10` gap, the animal's
