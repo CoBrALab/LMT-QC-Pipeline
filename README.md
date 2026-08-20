@@ -886,12 +886,23 @@ Per selected pool, written to `output_folder/{qc_mode}_A<animal_id>_{timestamp}/
    load `GAP_FILL_ANALYSIS` (or the legacy `ASSUMED_FRAMES` table)
    accordingly.
 4. **Filter to the requested pool.** `DETECTED` selects LMT-observed rows
-   outright; `BINARY_SEARCH` and `LOGIC` each select `ASSUMED` rows with a
-   resolved (`0`/`1`) `IN_NEST` value and a matching `FILL_SOURCE`,
-   deliberately excluding any row still stuck at `-1`. Attempting to sample
-   a pool the source file has no data for (e.g. `BINARY_SEARCH` from a
-   file that skipped script 2) produces a clear, actionable error rather
-   than a raw `KeyError`.
+   outright; `BINARY_SEARCH` and `LOGIC` each select `ASSUMED` rows with a
+   resolved (`0`/`1`) `IN_NEST` value and a matching `FILL_SOURCE`,
+   deliberately excluding any row still stuck at `-1`. Attempting to sample
+   a pool the source file has no data for (e.g. `BINARY_SEARCH` from a
+   file that skipped script 2) produces a clear, actionable error rather
+   than a raw `KeyError`.
+
+   **The `BINARY_SEARCH` pool is methodologically mixed.** `FILL_SOURCE ==
+   "BINARY_SEARCH"` is set identically for a `01`/`10` gap's recursive
+   binary-search decisions and for an above-threshold `00` gap's
+   checkpoint-review decisions (see script 2's step 4), there is no
+   separate value, flag, or column distinguishing the two. This script
+   samples and this pool's frames indistinguishably: a `00` gap and a
+   `10` gap compete for the same proportional sample budget, and
+   `4.lmt_qc_validator.py` reports one accuracy number across both. If
+   checkpoint-review accuracy and binary-search accuracy need to be
+   measured separately, that split isn't available from this pool as-is.
 5. **Draw a proportionally stratified sample**, bounded to the pool's
    actual size. The requested sample count is allocated across the pool's
    distinct gaps in proportion to each gap's frame count (largest-remainder
