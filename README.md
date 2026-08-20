@@ -557,7 +557,7 @@ silently dropped.
 |---|---|
 | `FRAMENUMBER`, `ASSUMPTION_TYPE`, `GAP_START_FRAME`, `GAP_END_FRAME`, `ANIMALID` | Carried over from script 1. |
 | `IN_NEST` | Final classification (`1`, `0`, or `-1` for a frame that was routed to the interactive reviewer but explicitly marked "cannot judge," or that fell in a gap type/duration this script does not review). |
-| `FILL_SOURCE` | `"DETECTED"`, `"LOGIC"` (filled by script 1), `"BINARY_SEARCH"` (routed to the interactive reviewer here, regardless of whether it resolved to `0`/`1` or was explicitly skipped and left `-1`), or `"UNKNOWN"` (never routed to the reviewer at all: below the duration threshold, or a type-11 gap). |
+| `FILL_SOURCE` | `"DETECTED"`, `"LOGIC"` (script 1's ROI heuristic decided the value; this column itself is written by script 2, not script 1), `"BINARY_SEARCH"` (routed to the interactive reviewer here, regardless of whether it resolved to `0`/`1` or was explicitly skipped and left `-1`), or `"UNKNOWN"` (never routed to the reviewer at all: below the duration threshold, or a type-11 gap). |
 
 This script no longer writes a separate `BINARY_SEARCH` integer column.
 `FILL_SOURCE == "BINARY_SEARCH"` alone identifies every frame routed to
