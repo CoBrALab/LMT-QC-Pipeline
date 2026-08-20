@@ -1258,7 +1258,6 @@ class BinarySearchGUI:
         df_out["IN_NEST"] = final_in_nest
 
         is_searchable = np.array([int(fn) in searchable_frames for fn in fn_arr])
-        df_out["BINARY_SEARCH"] = is_searchable.astype(int)
 
         df_out["FILL_SOURCE"] = np.where(
             is_searchable, "BINARY_SEARCH",
@@ -1267,7 +1266,6 @@ class BinarySearchGUI:
 
         # Merge detected rows back in to produce the full output table
         df_detected_out = self.df_all[self.df_all["ASSUMPTION_TYPE"] == "DETECTED"].copy()
-        df_detected_out["BINARY_SEARCH"] = 0
         df_detected_out["FILL_SOURCE"]   = "DETECTED"
 
         df_out = pd.concat(
