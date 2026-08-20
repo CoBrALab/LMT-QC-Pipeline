@@ -556,9 +556,14 @@ silently dropped.
 | Column | Meaning |
 |---|---|
 | `FRAMENUMBER`, `ASSUMPTION_TYPE`, `GAP_START_FRAME`, `GAP_END_FRAME`, `ANIMALID` | Carried over from script 1. |
-| `IN_NEST` | Final classification (`1`, `0`, or, only for gaps that were never resolvable, `-1`). |
-| `BINARY_SEARCH` | `1` if this frame was routed to the interactive reviewer, else `0`. |
-| `FILL_SOURCE` | `"DETECTED"`, `"LOGIC"` (filled by script 1), `"BINARY_SEARCH"` (resolved here), or `"UNKNOWN"` (still unresolved). |
+| `IN_NEST` | Final classification (`1`, `0`, or `-1` for a frame that was routed to the interactive reviewer but explicitly marked "cannot judge," or that fell in a gap type/duration this script does not review). |
+| `FILL_SOURCE` | `"DETECTED"`, `"LOGIC"` (filled by script 1), `"BINARY_SEARCH"` (routed to the interactive reviewer here, regardless of whether it resolved to `0`/`1` or was explicitly skipped and left `-1`), or `"UNKNOWN"` (never routed to the reviewer at all: below the duration threshold, or a type-11 gap). |
+
+This script no longer writes a separate `BINARY_SEARCH` integer column.
+`FILL_SOURCE == "BINARY_SEARCH"` alone identifies every frame routed to
+the interactive reviewer; a `BINARY_SEARCH` column may still be present
+and readable on older files produced before this change (see script 3's
+"Detect the source schema" step and `lmt_common.py`'s `compute_qc_pool_mask()`).
 
 ### Processing Steps
 
@@ -715,8 +720,8 @@ terminates in one of two ways:
 **7. Determine the final gap classification.** Once every subtask for
 every gap has been answered, all resulting frame decisions are merged with
 the unchanged `DETECTED` frame states into the authoritative final
-`IN_NEST` value for every frame, along with `BINARY_SEARCH` and
-`FILL_SOURCE` bookkeeping. This merge is a mix of vectorized NumPy
+`IN_NEST` value for every frame, along with `FILL_SOURCE` bookkeeping.
+This merge is a mix of vectorized NumPy
 boolean-mask assignment (for the bulk of the work: splitting already-valid
 `DETECTED` frames from the ones needing a decision) and a few small,
 per-frame Python lookups (checking `skipped_frames`/`searchable_frames`
@@ -767,13 +772,17 @@ inconsistencies.
 - Video filename parsing (`get_start_frame()`) requires a `t<digits>`
   segment immediately before the file extension; any other convention
   breaks video-to-frame mapping.
-- `BINARY_SEARCH = 1` must be set only for frames in gaps that were
-  actually routed to the reviewer (i.e. `01`/`10` gaps above the duration
-  threshold, and `00` gaps above the same threshold via checkpoint
-  review), `4.lmt_qc_validator.py` relies on this distinction.
-- Table name `GAP_FILL_ANALYSIS` and the `BINARY_SEARCH`/`FILL_SOURCE`
-  columns are read by name in `3.lmt_qc_sampler.py` and
-  `4.lmt_qc_validator.py`.
+- `FILL_SOURCE == "BINARY_SEARCH"` must be set only for frames in gaps
+  that were actually routed to the reviewer (i.e. `01`/`10` gaps above the
+  duration threshold, and `00` gaps above the same threshold via
+  checkpoint review), `3.lmt_qc_sampler.py` and `4.lmt_qc_validator.py`
+  rely on this distinction.
+- Table name `GAP_FILL_ANALYSIS` and the `FILL_SOURCE` column are read by
+  name in `3.lmt_qc_sampler.py` and `4.lmt_qc_validator.py`. This script no
+  longer writes a `BINARY_SEARCH` column, but `lmt_common.py`'s
+  `compute_qc_pool_mask()` still reads one if present, purely to keep
+  reading older files generated before this change (do not remove that
+  fallback).
 
 ### Open Source Notes
 - **External dependencies**: `opencv-python` (`cv2`), `numpy`, `pandas`,
@@ -1071,7 +1080,7 @@ Columns are identical to script 3's output table, plus:
 
 This module exists to guarantee one thing the pipeline's accuracy depends on: that scripts `2.lmt_binary_search.py`, `3.lmt_qc_sampler.py`, and `4.lmt_qc_validator.py` resolve a given video filename and a given requested global frame number to exactly the same substitute frame, every time. It is not a script, it has no GUI, no `__main__` entry point, and is never run directly. It is a shared library, imported by all three scripts above, holding the video/frame-resolution logic and the QC-pool eligibility rules that used to be three independently hand-maintained copies of the same code.
 
-`3.lmt_qc_sampler.py` draws its QC sample pool using this module's frame-resolution logic, and `4.lmt_qc_validator.py` measures accuracy by comparing a human's manual label against the label the pipeline assigned — that comparison is only meaningful if both scripts (and `2.lmt_binary_search.py`, which produced the underlying `BINARY_SEARCH`/`FILL_SOURCE` bookkeeping in the first place) agree on how a frame number maps to actual video content. Before this module existed, that agreement was enforced by hand-editing three copies in lockstep; this module makes it structural instead.
+`3.lmt_qc_sampler.py` draws its QC sample pool using this module's frame-resolution logic, and `4.lmt_qc_validator.py` measures accuracy by comparing a human's manual label against the label the pipeline assigned, that comparison is only meaningful if both scripts (and `2.lmt_binary_search.py`, which produced the underlying `FILL_SOURCE` bookkeeping (plus a legacy `BINARY_SEARCH` column on files predating it) in the first place) agree on how a frame number maps to actual video content. Before this module existed, that agreement was enforced by hand-editing three copies in lockstep; this module makes it structural instead.
 
 ### Provided to callers
 
@@ -1143,4 +1152,4 @@ No video files, SQLite databases, or GUI interaction are required, the suite run
 - External dependencies: pytest>=8.0.0 (dev dependency only, not required to run the pipeline itself).
 - Standard library: importlib.util, pathlib, sys.
 - Configuration files: pyproject.toml's [dependency-groups] dev section.
-- Platform assumptions: none beyond what the pipeline scripts themselves require. The suite is fully headless and does not depend on a display server, video codec support, or a live SQLite file.
+- Platform assumptions: none beyond what the pipeline scripts themselves require. The suite is fully headless and does not depend on a display server, video codec support, or a live SQLite file
