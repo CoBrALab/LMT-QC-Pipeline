@@ -234,7 +234,7 @@ def run(analysis_db, video_paths, output_folder, n_samples, qc_mode, overwrite=F
             "requested_frame":        requested_frame,
             "IN_NEST":                row["IN_NEST"],
             "ASSUMPTION_TYPE":        row.get("ASSUMPTION_TYPE", "ASSUMED"),
-            "FILL_SOURCE":            row.get("FILL_SOURCE", qc_mode),
+            "FILL_SOURCE":            row.get("FILL_SOURCE"),
             "GAP_START_FRAME":        gap_start,
             "GAP_END_FRAME":          gap_end,
             "screenshot":             final_screenshot_name,
