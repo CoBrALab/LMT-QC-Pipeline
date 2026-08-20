@@ -47,10 +47,9 @@ Pillow) into a local `.venv/`.
 
 Scripts 0, 1, and 3 are pure command-line tools; every input is a CLI
 argument/flag. Scripts 2 and 4 take their file/video/folder inputs as CLI
-arguments too, but still open a GUI window for the genuinely interactive
-part (the binary-search/checkpoint review in script 2, and manual QC
-labeling in script 4). See the **CLI Reference** section below for the
-full argument list (required vs. optional, defaults, and an example) for
+arguments too, but still open a GUI window for the interactive
+part. See the **CLI Reference** section below for the
+full argument list for
 each script, or run any script with `--help`.
 ```bash
 uv run python 0.Preprocessing.py --help
@@ -63,13 +62,13 @@ before launching, so there's no separate "activate the venv" step.
 uv add <package>       # add a new dependency
 uv lock --upgrade       # refresh pinned versions in uv.lock
 ```
-Both commands update `pyproject.toml`/`uv.lock` together — commit both
+Both commands update `pyproject.toml`/`uv.lock` together, commit both
 files afterward.
 
 **Note on `tkinter`:** scripts 0, 1, and 3 are pure command-line tools and
-have no GUI at all — they run fine on a headless/server environment.
+have no GUI at all, they run fine on a headless/server environment.
 Scripts 2 and 4 take their setup inputs as CLI arguments but still open a
-GUI window for their genuinely interactive step (binary-search/checkpoint
+GUI window for their interactive step (binary-search/checkpoint
 review, and manual QC labeling, respectively), so they still need a
 graphical display (X11, Wayland, macOS, or Windows) to run. uv's managed
 Python build already bundles Tcl/Tk, so no separate system `python3-tk`
@@ -80,8 +79,8 @@ package install is required for the two scripts that still need it.
 ## CLI Reference
 
 Every argument below is exactly as declared in each script's `argparse`
-parser (or, for script 2, `_build_arg_parser()`) — run any script with
-`--help` to see this same information from argparse directly.
+parser (or, for script 2, `_build_arg_parser()`). Run any script with
+`--help` (or `-h`) to see this same information from argparse directly.
 
 ### `0.Preprocessing.py`
 
@@ -92,7 +91,7 @@ parser (or, for script 2, `_build_arg_parser()`) — run any script with
 | `-i`, `--input` | path | The LMT Output SQLite to clean. |
 | `-o`, `--output-folder` | directory | Where `{input_name}_processed.sqlite` is written. |
 
-**Optional (no value taken — plain flags):**
+**Optional (no value taken, plain flags):**
 
 | Argument | Default | Controls |
 |---|---|---|
@@ -100,14 +99,14 @@ parser (or, for script 2, `_build_arg_parser()`) — run any script with
 
 **Example:**
 ```bash
-uv run python 0.Preprocessing.py -i raw.sqlite -o ./out --overwrite
+uv run python 0.Preprocessing.py -i "/path/to/input/<input_sqlite_file>.sqlite" -o "/path/to/output/<output_directory>"
 ```
 
 ### `1.lmt_gap_fill.py`
 
-**Required — every one of the following, with no defaults.** Unlike the
-retired GUI (which pre-filled these), the CLI intentionally does not
-guess an animal ID or ROI/buffer coordinates for you: an unnoticed
+**Required:** Unlike the
+retired GUI (which had default values), the CLI intentionally does not
+have a default animal ID or ROI/buffer coordinates: an unnoticed
 pre-filled value silently applied to the wrong animal or the wrong nest
 geometry would corrupt the in-nest time estimate without any indication
 something was wrong, so the script refuses to run until every one of
@@ -127,15 +126,11 @@ these is supplied explicitly.
 | `--buffer-ymin` | float | Buffer ROI Y minimum. |
 | `--buffer-ymax` | float | Buffer ROI Y maximum. |
 
-**Optional:** none — every argument above is required.
+**Optional:** none, every argument above is required.
 
 **Example:**
 ```bash
-uv run python 1.lmt_gap_fill.py \
-  -i raw_processed.sqlite -o ./out \
-  --animal-id 1 \
-  --nest-xmin 100 --nest-xmax 250 --nest-ymin 50 --nest-ymax 200 \
-  --buffer-xmin 80 --buffer-xmax 270 --buffer-ymin 30 --buffer-ymax 220
+uv run python 1.lmt_gap_fill.py -i "/path/to/input/<*_processed>.sqlite" -o "/path/to/output/<output_directory>" --animal-id <animal_id> --nest-xmin <nest_xmin> --nest-xmax <nest_xmax> --nest-ymin <nest_ymin> --nest-ymax <nest_ymax> --buffer-xmin <buffer_xmin> --buffer-xmax <buffer_xmax> --buffer-ymin <buffer_ymin> --buffer-ymax <buffer_ymax>
 ```
 
 ### `2.lmt_binary_search.py`
@@ -148,9 +143,14 @@ uv run python 1.lmt_gap_fill.py \
 | `-v`, `--videos` | one or more paths | LMT video file(s) (`*.mp4`) covering the gaps to review. |
 | `-o`, `--output-folder` | directory | Where the resulting SQLite/report is written. |
 
-**Optional:** none — these three are the only CLI arguments; everything
+**Optional:** none, these three are the only CLI arguments; everything
 else (thresholds, review interval, etc.) is a hardcoded module constant,
 unchanged by this issue.
+
+**Example:**
+```bash
+uv run python 2.lmt_binary_search.py -i "/path/to/input/lmt_gap_fill_A<animal_id>_<date>.sqlite" -v "/path/to/videos/*.mp4" -o "/path/to/output/<output_directory>"
+```
 
 ### `3.lmt_qc_sampler.py`
 
@@ -170,6 +170,11 @@ unchanged by this issue.
 | `--pools` | all three (`DETECTED BINARY_SEARCH LOGIC`) | Which QC pool(s) to sample from; pass one or more of `DETECTED`, `BINARY_SEARCH`, `LOGIC`. |
 | `--overwrite` | off | Overwrite a pool's output folder if it already contains files from an earlier run today. Without it, that pool aborts. |
 
+**Example:**
+```bash
+uv run python 3.lmt_qc_sampler.py -i "/path/to/input/lmt_binary_search_A<animal_id>_<YYYY-MM-DD_HH-MM-SS>.sqlite" -v "/path/to/videos/*.mp4" -o "/path/to/output/<output_directory>" -n 150 --pools DETECTED LOGIC
+```
+
 ### `4.lmt_qc_validator.py`
 
 **Required:**
@@ -184,6 +189,11 @@ unchanged by this issue.
 | Argument | Default | Controls |
 |---|---|---|
 | `-v`, `--videos` | none (empty) | LMT video file(s) (`*.mp4`); when supplied, enables the three-panel before/QC-frame/after view for `BINARY_SEARCH`/`LOGIC`/legacy `ASSUMED`-mode samples. Not needed for `DETECTED`-mode samples, which show only the pre-extracted screenshot. |
+
+**Example:**
+```bash
+uv run python 4.lmt_qc_validator.py -i "/path/to/input/lmt_qc_sampler_<qc_mode>_A<animal_id>_<YYYY-MM-DD_HH-MM-SS>.sqlite" -o "/path/to/output/<screenshots_directory>" -v "/path/to/videos/*.mp4"
+```
 
 ---
 
@@ -202,7 +212,7 @@ rather than being re-implemented as a filter in every other script.
 on the assumption that a missing FRONT/BACK coordinate meant the row was
 unusable. QC testing across several real SQLite databases showed that
 assumption doesn't hold: a row can have `FRONT_*`/`BACK_*` all `-1` while
-still carrying an accurate, usable `MASS_X`/`MASS_Y` position (refer to Git Issue #26), the
+still carrying an accurate, usable `MASS_X`/`MASS_Y` position (see Git Issue [#26](https://github.com/CoBrALab/LMT-QC-Pipeline/issues/26)), the
 coordinate pair this pipeline actually relies on throughout. Those rows
 are now kept unchanged; this script doesn't inspect the `FRONT_*`/
 `BACK_*` columns at all.
@@ -215,8 +225,8 @@ two rules:
 
 - **Case A - completely identical rows.** If two or more rows are
   identical across every column (excluding a surrogate/auto-increment
-  primary key, if the table has one), the first occurrence — by original
-  row order — is kept, and the later identical rows are deleted.
+  primary key, if the table has one), the first occurrence (by original
+  row order) is kept, and the later identical rows are deleted.
 - **Case B - conflicting rows.** If two or more rows share the same
   (`FRAMENUMBER`, `ANIMALID`) but disagree on some other column (e.g. two
   different `MASS_X`/`MASS_Y` readings for the same frame and animal),
@@ -226,7 +236,7 @@ two rules:
 
 This matters beyond just data cleanliness: `1.lmt_gap_fill.py`'s
 gap-detection logic assumes `FRAMENUMBER` strictly increases for a given
-animal (see Issue #5). A duplicate or out-of-order `FRAMENUMBER` silently
+animal (see Git Issue [#5](https://github.com/CoBrALab/LMT-QC-Pipeline/issues/5)). A duplicate or out-of-order `FRAMENUMBER` silently
 corrupts that script's gap sizing and the resulting in-nest time estimate,
 without raising any error, unless this deduplication has already run.
 
@@ -308,7 +318,7 @@ inspected by this script.
   on `FRONT_X = -1`, treating a specific coordinate value as an invalidity
   sentinel. That conflated "this row's FRONT/BACK tracking failed" with
   "this row is unusable," which QC testing showed to be false: `MASS_X`/
-  `MASS_Y` — the values this pipeline is actually built on — can still be
+  `MASS_Y`, the values this pipeline is actually built on, can still be
   accurate on such a row. Whether two rows for the same frame and animal
   *agree* is a much safer signal than what either row's coordinates
   happen to be.
@@ -398,7 +408,7 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
 | `ASSUMPTION_TYPE` | `"DETECTED"` (an actual LMT observation) or `"ASSUMED"` (a filled-in gap frame). |
 | `GAP_START_FRAME` | For `ASSUMED` rows, the last detected frame *before* the gap; `None` for `DETECTED` rows. |
 | `GAP_END_FRAME` | For `ASSUMED` rows, the first detected frame *after* the gap; `None` for `DETECTED` rows. |
-| `ANIMALID` | The animal ID this run was filtered to (the `--animal-id` argument), on every row. Read automatically from the source database by `3.lmt_qc_sampler.py`; required by that script. |
+| `ANIMALID` | The animal ID this run was filtered to (the `--animal-id` argument), on every row. |
 
 ### Processing Steps
 1. **Load one animal's detections**, ordered by `FRAMENUMBER`, using a
@@ -412,8 +422,8 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
    than `1` means one or more frames went undetected in between a *gap*
    and every missing `FRAMENUMBER` in that range becomes an `ASSUMED` row.
    A distance of `0` or less (a duplicate or out-of-order `FRAMENUMBER` for
-   this animal) is a defensive validation failure (Issue #5) rather than a
-   silently-accepted "no gap" — see Key Design Decisions below.
+   this animal) is a defensive validation failure (Git Issue [#5](https://github.com/CoBrALab/LMT-QC-Pipeline/issues/5)) rather than a
+   silently-accepted "no gap" (see Key Design Decisions below).
 4. **Decide each gap's fate using only its two endpoints** (this is the
    core heuristic, and the reason a human is not required for most gaps):
    - Test whether the animal was inside the **nest ROI** at the last frame
@@ -443,7 +453,7 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
   estimate without any error. `0.Preprocessing.py`'s dedup on
   (`FRAMENUMBER`, `ANIMALID`) is expected to make this invariant hold by
   the time this script runs, so the check here should never actually
-  trigger in the normal pipeline order — it exists to fail loudly, rather
+  trigger in the normal pipeline order. It exists to fail loudly, rather
   than corrupt results silently, if this script is ever run against data
   that skipped that step.
 - **Two independent, asymmetric ROI tests, not one.** The buffer ROI is
@@ -490,7 +500,7 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
   required with no defaults — see the **CLI Reference** section above.
 - **Expected directory structure**: none required beyond a writable output
   folder.
-- **Platform assumptions**: none — fully headless, no GUI toolkit is used.
+- **Platform assumptions**: none, fully headless, no GUI toolkit is used.
 
 ---
 
@@ -511,10 +521,10 @@ boundary type, and skips the gaps that cannot or need not be searched.
 Remaining gaps are queued for an interactive, GUI-driven review: the
 reviewer is shown a three-panel view (last detected frame before the gap,
 a candidate frame partway through the gap, and the first detected frame
-after the gap) and answers "IN NEST" or "OUT OF NEST," which recursively
+after the gap) and answers "IN NEST" or "OUT OF NEST" or "SKIP," which recursively
 narrows the segment until the transition frame is pinned down. Once every
 gap has been processed, it writes the final per-frame classification (with
-`FILL_SOURCE`/`BINARY_SEARCH` bookkeeping columns) plus a detailed
+`FILL_SOURCE`) plus a detailed
 plain-text summary report with internal integrity checks.
 
 ### Inputs
@@ -573,7 +583,7 @@ immediately after it, every gap is labeled with one of four types:
   inside the (wider) buffer ROI, and the buffer ROI is validated to fully
   contain the nest ROI. A frame strictly inside the nest ROI is therefore
   always also inside the buffer ROI, so this fill condition is always
-  satisfied for a type-11 gap's endpoints — script 1 always resolves these
+  satisfied for a type-11 gap's endpoints. Script 1 always resolves these
   to `IN_NEST = 1`, and a `-1` frame in a type-11 gap should never reach
   this script. The check here is a defensive one (e.g. against a
   hand-edited or otherwise inconsistent input file, not a case this
@@ -586,15 +596,14 @@ immediately after it, every gap is labeled with one of four types:
   gap**. These are the only gap types eligible for binary search. Note
   that script 1's fill rule only requires the *after* frame to be inside
   the looser buffer ROI, not the strict nest ROI, so some `10`-boundary
-  gaps (in-nest before, but only buffer-adjacent — not strictly in-nest —
+  gaps (in-nest before, but only buffer-adjacent (not strictly in-nest)
   after) are already resolved by script 1 and never reach this script at
   all; the `10` gaps seen and reviewed here are only the ones where that
   buffer test failed.
-  (Type-00 gaps are eligible for a different review mechanism — see
+  (Type-00 gaps are eligible for a different review mechanism, see
   step 4)
 
-**3. Filter by duration.** Among `01`/`10` gaps (and, since checkpoint
-review was added, `00` gaps as well), any at or below
+**3. Filter by duration.** For `01`,`10`, and `00` gaps, any at or below
 `MIN_GAP_DURATION_FOR_BINARY_SEARCH` (default 30 seconds) are left `-1`
 rather than queued for review, a gap this short contributes little to the
 overall time-in-nest estimate relative to the reviewer time it would cost
@@ -665,7 +674,7 @@ terminates in one of two ways:
   subtask, so no frame is ever double-counted or dropped.
 - As a practical shortcut, once a candidate segment's *duration* drops to
   or below `FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES` (default
-  1 minute — despite the name, the actual comparison is inclusive: exactly
+  1 minute: despite the name, the actual comparison is inclusive: exactly
   1 minute also qualifies), the entire remaining segment is filled from a
   single answer instead of continuing to subdivide down to individual
   frames. Sub-minute precision on exactly which frame a transition
@@ -747,7 +756,7 @@ inconsistencies.
   `FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES = 1 min`, and
   `TYPE00_REVIEW_INTERVAL_SECONDS = 60s` are hardcoded module-level
   constants in this script. `DB_FPS`, `FRAME_CONVERSION`, and
-  `FPS_TOLERANCE = 0.5` are not hardcoded here — they're imported from
+  `FPS_TOLERANCE = 0.5` are not hardcoded here, they're imported from
   `lmt_common.py`, the module shared with scripts 3 and 4.
 - **Expected directory structure**: none required beyond a writable output
   folder (`_binsearch_tmp` is created automatically and cleaned up
@@ -848,7 +857,7 @@ Per selected pool, written to `output_folder/{qc_mode}_A<animal_id>_{timestamp}/
    actual size. The requested sample count is allocated across the pool's
    distinct gaps in proportion to each gap's frame count (largest-remainder
    apportionment, so the allocation sums exactly to the request), then that
-   many frames are drawn uniformly at random *within* each gap — this
+   many frames are drawn uniformly at random *within* each gap, this
    avoids a plain uniform draw over all frames being dominated by a
    handful of very large gaps. An explicit, freshly-generated random seed
    is used and reported back to the user: the draw is still effectively
