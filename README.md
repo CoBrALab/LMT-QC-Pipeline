@@ -691,15 +691,26 @@ terminates in one of two ways:
   frame originally in the gap, every subtask either fills a contiguous
   block outright or hands off exactly the untouched remainder to a new
   subtask, so no frame is ever double-counted or dropped.
-- As a practical shortcut, once a candidate segment's *duration* drops to
-  or below `FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES` (default
-  1 minute: despite the name, the actual comparison is inclusive: exactly
-  1 minute also qualifies), the entire remaining segment is filled from a
-  single answer instead of continuing to subdivide down to individual
-  frames. Sub-minute precision on exactly which frame a transition
-  occurred is not meaningful for this pipeline's purposes, so this trades
-  a small amount of possible imprecision for a large reduction in reviewer
-  clicks.
+- As a practical shortcut, once a candidate `01`/`10` segment's *duration*
+  drops to or below `FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES`
+  (default 1 minute: despite the name, the actual comparison is inclusive:
+  exactly 1 minute also qualifies), the entire remaining segment is filled
+  from a single answer instead of continuing to subdivide down to
+  individual frames, an OUT OF NEST answer fills the whole segment `0`,
+  an IN NEST answer fills it `1`, symmetrically. Sub-minute precision on
+  exactly which frame a transition occurred is not meaningful for this
+  pipeline's purposes, so this trades a small amount of possible
+  imprecision for a large reduction in reviewer clicks.
+- **This shortcut is deliberately skipped for type-00 checkpoints**,
+  regardless of segment duration. `TYPE00_REVIEW_INTERVAL_SECONDS`
+  (default 60s) is the same length as this shortcut's default threshold
+  (1 minute), so most type-00 checkpoint segments would otherwise land
+  exactly on this boundary and short-circuit here, which would silently
+  skip the type-10 hand-off on an IN answer (step 4), since this shortcut
+  only fills and advances and never hands off. Type-00 checkpoints always
+  go through their own answer-handling path instead (step 4), which fills
+  identically to this shortcut on an OUT answer but adds the hand-off on
+  an IN answer, independent of segment duration.
 
 **7. Determine the final gap classification.** Once every subtask for
 every gap has been answered, all resulting frame decisions are merged with
