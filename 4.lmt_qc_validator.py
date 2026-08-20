@@ -290,7 +290,7 @@ def show_sample():
     frame_text.config(text=f"Global Frame: {row['frame_global']}")
 
     #  Mode-aware labels 
-    row_type = row.get("ASSUMPTION_TYPE", active_qc_mode)
+    row_type = row.get("ASSUMPTION_TYPE")
     assumption_text.config(text=f"Row Type: {row_type}")
 
     # Gap info is only meaningful for ASSUMED rows
