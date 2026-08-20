@@ -202,7 +202,7 @@ rather than being re-implemented as a filter in every other script.
 on the assumption that a missing FRONT/BACK coordinate meant the row was
 unusable. QC testing across several real SQLite databases showed that
 assumption doesn't hold: a row can have `FRONT_*`/`BACK_*` all `-1` while
-still carrying an accurate, usable `MASS_X`/`MASS_Y` position, the
+still carrying an accurate, usable `MASS_X`/`MASS_Y` position (refer to Git Issue #26), the
 coordinate pair this pipeline actually relies on throughout. Those rows
 are now kept unchanged; this script doesn't inspect the `FRONT_*`/
 `BACK_*` columns at all.
