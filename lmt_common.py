@@ -137,7 +137,7 @@ def find_nearest_frame_candidates(video_map, global_frame):
 
 
 def _read_frame_from_video(video_entry, resolved_frame, out_path):
-    local_frame = int((resolved_frame - video_entry["start"]) / FRAME_CONVERSION)
+    local_frame = round((resolved_frame - video_entry["start"]) / FRAME_CONVERSION)
     cap = _get_capture(video_entry["path"])
     if not cap.isOpened():
         return False
