@@ -868,7 +868,7 @@ Per selected pool, written to `output_folder/{qc_mode}_A<animal_id>_{timestamp}/
 | `requested_frame` | The originally sampled `FRAMENUMBER`, before any resolution. |
 | `IN_NEST` | Classification carried over from the source row. |
 | `ASSUMPTION_TYPE` | `"DETECTED"` or `"ASSUMED"`, carried over. |
-| `FILL_SOURCE` | Carried over if present in the source; otherwise defaults to the requested pool. |
+| `FILL_SOURCE` | Carried over if present in the source; `null` if the source predates this column. |
 | `GAP_START_FRAME` / `GAP_END_FRAME` | Carried over; populated only for `ASSUMED` rows. |
 | `screenshot` | Filename of the extracted PNG, relative to `Screenshots/`. |
 | `QC_MODE` | Which pool this row belongs to (`"DETECTED"` / `"BINARY_SEARCH"` / `"LOGIC"`). |
