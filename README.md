@@ -601,8 +601,9 @@ boundary type, and skips the gaps that cannot or need not be searched.
 Remaining gaps are queued for an interactive, GUI-driven review: the
 reviewer is shown a three-panel view (last detected frame before the gap,
 a candidate frame partway through the gap, and the first detected frame
-after the gap) and answers "IN NEST" or "OUT OF NEST" or "SKIP," which recursively
-narrows the segment until the transition frame is pinned down. Once every
+after the gap) and answers **IN NEST**, **OUT OF NEST**, or **Skip — Cannot Judge**. IN
+NEST/OUT OF NEST recursively narrow the segment until the transition frame is pinned
+down; Skip abandons the current segment as unresolved instead (see step 5/6 below). Once every
 gap has been processed, it writes the final per-frame classification (with
 `FILL_SOURCE`) plus a detailed
 plain-text summary report with internal integrity checks.
@@ -762,6 +763,11 @@ frames, so a gap spanning thousands of frames typically resolves in well
 under twenty clicks rather than requiring the reviewer to scrub through it
 frame by frame.
 
+The reviewer answers each shown frame with one of three controls: **IN NEST (`A`)**,
+**OUT OF NEST (`D`)**, or **Skip — Cannot Judge (`W`)** (see "Convergence and
+termination" below for what Skip does). **Undo (`←`)** and **Redo (`→`)** step back and
+forward through the answer history.
+
 Concretely, for a segment `[seg_start, seg_end]` still being searched, the
 reviewer is shown the frame at the midpoint and asked whether the animal is
 currently in the nest. What that answer implies and which half of the
@@ -793,7 +799,7 @@ immediately and which half continues to be searched is flipped, because
 which endpoint state is "known" differs between an entry and an exit.
 
 **6. Convergence and termination.** Recursion on a gap's subtasks
-terminates in one of two ways:
+terminates in one of three ways:
 
 - The segment being searched shrinks to zero width (`seg_start > seg_end`),
   at which point the two already-filled halves fully account for every
@@ -820,6 +826,14 @@ terminates in one of two ways:
   go through their own answer-handling path instead (step 4), which fills
   identically to this shortcut on an OUT answer but adds the hand-off on
   an IN answer, independent of segment duration.
+- **The reviewer can also end a segment early with "Skip — Cannot Judge (`W`)."**
+  Unlike an IN NEST/OUT OF NEST answer, Skip does not narrow the search: it marks
+  *every* frame in the current segment `-1` and abandons that segment entirely, moving
+  on to the next task. It's the control to use when the frame is genuinely
+  unjudgeable rather than guessed at.
+  Skipped frames participate in Undo/Redo exactly like an IN NEST/OUT OF NEST answer.
+  In the summary report, these frames are counted separately from
+  threshold-skipped frames (gaps that never reached a reviewer at all).
 
 **7. Determine the final gap classification.** Once every subtask for
 every gap has been answered, all resulting frame decisions are merged with
