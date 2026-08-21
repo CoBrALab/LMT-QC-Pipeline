@@ -175,6 +175,22 @@ def run_analysis(input_db, output_folder, animal_id, nest_xmin, nest_xmax, nest_
 
     conn = sqlite3.connect(output_sqlite)
     output_df.to_sql("GAP_FILL_ANALYSIS", conn, if_exists="replace", index=False)
+
+    # Git Issue #22 follow-up: persist the Nest/Buffer ROI this run used,
+    # so 2.lmt_binary_search.py can automatically reuse it for the Nest ROI
+    # overlay (and the summary report) without the user having to retype
+    # --nest-xmin/--nest-xmax/--nest-ymin/--nest-ymax on the CLI a second
+    # time. One row, same {"xmin","xmax","ymin","ymax"} values already
+    # validated above for NEST/NEST_BUFFER.
+    roi_metadata_df = pd.DataFrame([{
+        "ANIMALID":    animal_id,
+        "NEST_XMIN":   nest_xmin,   "NEST_XMAX":   nest_xmax,
+        "NEST_YMIN":   nest_ymin,   "NEST_YMAX":   nest_ymax,
+        "BUFFER_XMIN": buffer_xmin, "BUFFER_XMAX": buffer_xmax,
+        "BUFFER_YMIN": buffer_ymin, "BUFFER_YMAX": buffer_ymax,
+    }])
+    roi_metadata_df.to_sql("ROI_METADATA", conn, if_exists="replace", index=False)
+
     conn.close()
 
     print(
