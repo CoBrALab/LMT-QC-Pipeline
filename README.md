@@ -17,6 +17,8 @@ static spatial rules first, then a small number of targeted human video
 reviews, and finally an independent statistical audit of how well the whole
 process performed.
 
+Find more information about Live Mouse Tracker (LMT) on its [website](https://micecraft.org/lmt/) and [publication](https://www.nature.com/articles/s41551-019-0396-1.epdf?shared_access_token=8wpLBUUytAaGAtXL96vwIdRgN0jAjWel9jnR3ZoTv0MWp3GqbF86Gf14i30j-gtSG2ayVLmU-s57ZbhM2WJjw18inKlRYt31Cg_hLJbPCqlKdjWBImyT1OrH5tewfPqUthmWceoct6RVAL_Vt8H-Og%3D%3D).
+
 ## Execution order
 
 1. `0.Preprocessing.py`: clean raw LMT SQLite (deduplicate DETECTION rows).
