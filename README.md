@@ -170,17 +170,17 @@ Thresholds, review interval, etc. remain hardcoded module constants, unaffected 
 
 **Example (no overlay, unchanged from before):**
 ```bash
-uv run python 2.lmt_binary_search.py -i "/path/to/input/lmt_gap_fill_A<animal_id>_<date>.sqlite" -v "/path/to/videos/*.mp4" -o "/path/to/output/<output_directory>"
+uv run python 2.lmt_binary_search.py -i "/path/to/input/lmt_gap_fill_A<animal_id>_<date>.sqlite" -v /path/to/videos/*.mp4 -o "/path/to/output/<output_directory>"
 ```
 
 **Example (both overlays on, Nest and Buffer ROI auto-loaded from the input file):**
 ```bash
-uv run python 2.lmt_binary_search.py -i "/path/to/input/lmt_gap_fill_A<animal_id>_<date>.sqlite" -v "/path/to/videos/*.mp4" -o "/path/to/output/<output_directory>" --show-nest-roi --show-buffer-roi
+uv run python 2.lmt_binary_search.py -i "/path/to/input/lmt_gap_fill_A<animal_id>_<date>.sqlite" -v /path/to/videos/*.mp4 -o "/path/to/output/<output_directory>" --show-nest-roi --show-buffer-roi
 ```
 
 **Example (overlays on, with a custom shared colour/thickness):**
 ```bash
-uv run python 2.lmt_binary_search.py -i "/path/to/input/lmt_gap_fill_A<animal_id>_<date>.sqlite" -v "/path/to/videos/*.mp4" -o "/path/to/output/<output_directory>" --show-nest-roi --show-buffer-roi --roi-color "#00FFFF" --roi-thickness 4
+uv run python 2.lmt_binary_search.py -i "/path/to/input/lmt_gap_fill_A<animal_id>_<date>.sqlite" -v /path/to/videos/*.mp4 -o "/path/to/output/<output_directory>" --show-nest-roi --show-buffer-roi --roi-color "#00FFFF" --roi-thickness 4
 ```
 
 ### `3.lmt_qc_sampler.py`
@@ -203,7 +203,7 @@ uv run python 2.lmt_binary_search.py -i "/path/to/input/lmt_gap_fill_A<animal_id
 
 **Example:**
 ```bash
-uv run python 3.lmt_qc_sampler.py -i "/path/to/input/lmt_binary_search_A<animal_id>_<YYYY-MM-DD_HH-MM-SS>.sqlite" -v "/path/to/videos/*.mp4" -o "/path/to/output/<output_directory>" -n 150 --pools DETECTED LOGIC
+uv run python 3.lmt_qc_sampler.py -i "/path/to/input/lmt_binary_search_A<animal_id>_<YYYY-MM-DD_HH-MM-SS>.sqlite" -v /path/to/videos/*.mp4 -o "/path/to/output/<output_directory>" -n 150 --pools DETECTED LOGIC
 ```
 
 ### `4.lmt_qc_validator.py`
@@ -223,7 +223,7 @@ uv run python 3.lmt_qc_sampler.py -i "/path/to/input/lmt_binary_search_A<animal_
 
 **Example:**
 ```bash
-uv run python 4.lmt_qc_validator.py -i "/path/to/input/lmt_qc_sampler_<qc_mode>_A<animal_id>_<YYYY-MM-DD_HH-MM-SS>.sqlite" -o "/path/to/output/<screenshots_directory>" -v "/path/to/videos/*.mp4"
+uv run python 4.lmt_qc_validator.py -i "/path/to/input/lmt_qc_sampler_<qc_mode>_A<animal_id>_<YYYY-MM-DD_HH-MM-SS>.sqlite" -o "/path/to/output/<screenshots_directory>" -v /path/to/videos/*.mp4
 ```
 
 ---
