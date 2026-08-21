@@ -548,7 +548,7 @@ def write_summary_report(report_path, source_db_path,
         f.write(f"      → Reclassified OUT = 0:       {fr}  ({hms})\n")
         if bs_unknown > 0:
             fr, hms, dec = fmt_triple(bs_unknown)
-            f.write(f"      → Residual unknown (-1):      {fr}  (unexpected)\n")
+            f.write(f"      → Skipped by reviewer (-1):   {fr}  (\"Skip — Cannot Judge\")\n")
         f.write("\n")
 
         fr, hms, dec = fmt_triple(threshold_skipped)
@@ -594,7 +594,7 @@ def write_summary_report(report_path, source_db_path,
 
         if bs_unknown > 0:
             fr, hms, dec = fmt_triple(bs_unknown)
-            f.write(f"  Remaining IN_NEST = -1 (binary-search residual, unexpected)\n")
+            f.write(f"  Remaining IN_NEST = -1 (reviewer marked \"Skip — Cannot Judge\")\n")
             f.write(f"    Frames:        {fr}  ({hms})  [{dec} h]\n")
             f.write(f"    % of bs input: {pct(bs_unknown, bs_input_total):.1f}%\n\n")
 
@@ -616,6 +616,37 @@ def write_summary_report(report_path, source_db_path,
 
         bs_check = (bs_in_frames + bs_out_frames + bs_unknown + threshold_skipped + zz_skipped + ze_skipped)
         f.write(f"  Balance check: {bs_in_frames:,} IN + {bs_out_frames:,} OUT + {bs_unknown:,} UNK + {threshold_skipped:,} thresh + {zz_skipped:,} type-00 + {ze_skipped:,} type-11 = {bs_check:,}  [input: {bs_input_total:,}]  {'OK' if bs_check == bs_input_total else 'MISMATCH'}\n\n")
+
+        # Section 5B: IN_NEST = -1 Source Breakdown (the two review-eligibility pools)
+        f.write("=" * 70 + "\n")
+        f.write("IN_NEST = -1 SOURCE BREAKDOWN  (why a frame is still unresolved)\n")
+        f.write("=" * 70 + "\n\n")
+        f.write("  Every remaining IN_NEST = -1 frame falls into one of two pools,\n")
+        f.write("  distinguished by whether it was ever shown to the reviewer:\n\n")
+
+        pool_a_total = threshold_skipped + zz_skipped
+        fr, hms, dec = fmt_triple(pool_a_total)
+        f.write(f"  POOL A — Never sent to review (\u2264 {MIN_GAP_DURATION_FOR_BINARY_SEARCH}s duration threshold)\n")
+        f.write(f"    Frames:        {fr}  ({hms})  [{dec} h]\n")
+        f.write(f"    % of final unknown: {pct(pool_a_total, final_unk):.1f}%\n")
+        fr, hms, dec = fmt_triple(threshold_skipped)
+        f.write(f"      - type 01/10 gaps \u2264 threshold: {fr}  ({hms})\n")
+        fr, hms, dec = fmt_triple(zz_skipped)
+        f.write(f"      - type 00 gaps \u2264 threshold:    {fr}  ({hms})\n\n")
+
+        fr, hms, dec = fmt_triple(bs_unknown)
+        f.write(f"  POOL B — Sent to review, reviewer pressed \"Skip \u2014 Cannot Judge (W)\"\n")
+        f.write(f"    Frames:        {fr}  ({hms})  [{dec} h]\n")
+        f.write(f"    % of final unknown: {pct(bs_unknown, final_unk):.1f}%\n\n")
+
+        if ze_skipped > 0:
+            fr, hms, dec = fmt_triple(ze_skipped)
+            f.write(f"  Also present (not Pool A or B \u2014 unexpected): type-11 gaps with a\n")
+            f.write(f"  -1 frame that should have been logic-filled by 1.lmt_gap_fill.py.\n")
+            f.write(f"  Frames: {fr}  ({hms})\n\n")
+
+        pool_check = pool_a_total + bs_unknown + ze_skipped
+        f.write(f"  Balance check: Pool A {pool_a_total:,} + Pool B {bs_unknown:,} + type-11 {ze_skipped:,} = {pool_check:,}  [total unknown: {final_unk:,}]  {'OK' if pool_check == final_unk else 'MISMATCH'}\n\n")
 
         # Section 6: Classification Audit Table
         f.write("=" * 70 + "\n")
@@ -1215,9 +1246,12 @@ class BinarySearchGUI:
         current segment UNKNOWN (-1) and stops searching it, recording the
         frames in self.explicitly_skipped_frames so _finish()'s integrity
         check (which exists to catch frames *accidentally* left without a
-        decision) does not treat a deliberate skip as a bug. Counted in
-        bs_unknown exactly like any other -1, per write_summary_report's
-        existing accounting.
+        decision) does not treat a deliberate skip as a bug. Frames in 
+        self.explicitly_skipped_frames so _finish()'s integrity
+        check (which exists to catch frames *accidentally* left without a
+        decision) does not treat a deliberate skip as a bug. Reported as
+        Pool B ("Skip — Cannot Judge") in write_summary_report's IN_NEST = -1
+        source breakdown.
         """
         task = self.current_task
         if task is None:
@@ -1424,7 +1458,7 @@ class BinarySearchGUI:
         # COMPLETION DIALOG
         neg_remaining = int((df_out["IN_NEST"] == -1).sum())
 
-        messagebox.showinfo("Binary Search Complete", f"All gaps processed.\n\nTotal review time:               {seconds_to_hms(total_review_seconds)}\n\nBinary-search input frames:      {bs_input_total:,}\n  Routed to reviewer:            {len(searchable_frames):,}\n    - Reclassified IN NEST:      {bs_in_frames:,}\n    - Reclassified OUT OF NEST:  {bs_out_frames:,}\n    - Residual unknown:          {bs_unknown:,}\n  Skipped (\u2264 threshold):          {threshold_skipped:,}\n  Skipped (type-00):             {zz_skipped:,}\n  Skipped (type-11):             {ze_skipped:,}\n  Balance: {bs_in_frames+bs_out_frames+bs_unknown+threshold_skipped+zz_skipped+ze_skipped:,} {'== OK' if bs_in_frames+bs_out_frames+bs_unknown+threshold_skipped+zz_skipped+ze_skipped==bs_input_total else '!= MISMATCH'}\n\nRemaining IN_NEST = -1:          {neg_remaining:,}\n\nSQLite output:\n{out_sqlite}\n\nSummary report:\n{report_path}\n\nFeed the SQLite into 3.lmt_qc_sampler.py.")
+        messagebox.showinfo("Binary Search Complete", f"All gaps processed.\n\nTotal review time:               {seconds_to_hms(total_review_seconds)}\n\nBinary-search input frames:      {bs_input_total:,}\n  Routed to reviewer:            {len(searchable_frames):,}\n    - Reclassified IN NEST:      {bs_in_frames:,}\n    - Reclassified OUT OF NEST:  {bs_out_frames:,}\n    - Skipped by reviewer:          {bs_unknown:,}\n  Skipped (\u2264 threshold):          {threshold_skipped:,}\n  Skipped (type-00):             {zz_skipped:,}\n  Skipped (type-11):             {ze_skipped:,}\n  Balance: {bs_in_frames+bs_out_frames+bs_unknown+threshold_skipped+zz_skipped+ze_skipped:,} {'== OK' if bs_in_frames+bs_out_frames+bs_unknown+threshold_skipped+zz_skipped+ze_skipped==bs_input_total else '!= MISMATCH'}\n\nRemaining IN_NEST = -1:          {neg_remaining:,}\n\nSQLite output:\n{out_sqlite}\n\nSummary report:\n{report_path}\n\nFeed the SQLite into 3.lmt_qc_sampler.py.")
         self.root.quit()
 
 # CLI entry point
