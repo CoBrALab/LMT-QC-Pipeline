@@ -186,6 +186,8 @@ uv run python 2.lmt_binary_search.py -i "/path/to/input/lmt_gap_fill_A<animal_id
 uv run python 2.lmt_binary_search.py -i "/path/to/input/lmt_gap_fill_A<animal_id>_<date>.sqlite" -v /path/to/videos/*.mp4 -o "/path/to/output/<output_directory>" --show-nest-roi --show-buffer-roi --roi-color "#00FFFF" --roi-thickness 4
 ```
 
+> **Note:** If LMT is configured to request raw videos without overlays, both raw and overlay `.mp4` files may be created in the same folder. Using `*.mp4` will select **all** `.mp4` files, so make sure the video pattern/path matches the files you intend to use.
+
 ### `3.lmt_qc_sampler.py`
 
 **Required:**
@@ -208,6 +210,8 @@ uv run python 2.lmt_binary_search.py -i "/path/to/input/lmt_gap_fill_A<animal_id
 ```bash
 uv run python 3.lmt_qc_sampler.py -i "/path/to/input/lmt_binary_search_A<animal_id>_<YYYY-MM-DD_HH-MM-SS>.sqlite" -v /path/to/videos/*.mp4 -o "/path/to/output/<output_directory>" -n 150 --pools DETECTED LOGIC
 ```
+
+> **Note:** If LMT is configured to request raw videos without overlays, both raw and overlay `.mp4` files may be created in the same folder. Using `*.mp4` will select **all** `.mp4` files, so make sure the video pattern/path matches the files you intend to use.
 
 ### `4.lmt_qc_validator.py`
 
@@ -248,6 +252,8 @@ uv run python 4.lmt_qc_validator.py -i "/path/to/input/lmt_qc_sampler_<qc_mode>_
 ```bash
 uv run python 4.lmt_qc_validator.py -i "/path/to/input/lmt_qc_sampler_<qc_mode>_A<animal_id>_<YYYY-MM-DD_HH-MM-SS>.sqlite" -o "/path/to/output/<screenshots_directory>" -v /path/to/videos/*.mp4 --show-nest-roi --show-buffer-roi
 ```
+
+> **Note:** If LMT is configured to request raw videos without overlays, both raw and overlay `.mp4` files may be created in the same folder. Using `*.mp4` will select **all** `.mp4` files, so make sure the video pattern/path matches the files you intend to use.
 
 ---
 
