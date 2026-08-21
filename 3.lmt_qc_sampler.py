@@ -8,7 +8,7 @@ import cv2
 
 from lmt_common import (DB_FPS, FRAME_CONVERSION, QC_MODE_DETECTED, QC_MODE_BINARY_SEARCH, 
                         QC_MODE_LOGIC, EXPECTED_VIDEO_FPS, build_video_map, find_nearest_frame_candidates, _read_frame_from_video, 
-                        _release_all_captures, compute_qc_pool_mask)
+                        _release_all_captures, compute_qc_pool_mask, load_roi_metadata_from_db, write_roi_metadata)
 
 import sqlite3
 import pandas as pd
@@ -161,6 +161,13 @@ def run(analysis_db, video_paths, output_folder, n_samples, qc_mode, overwrite=F
             "SELECT name FROM sqlite_master WHERE type='table' AND name='GAP_FILL_ANALYSIS'")
         table   = "GAP_FILL_ANALYSIS" if cursor.fetchone() else "ASSUMED_FRAMES"
         df_full = pd.read_sql_query(f"SELECT * FROM {table} ORDER BY FRAMENUMBER", conn)
+
+        # Git Issue #22 (4.lmt_qc_validator.py follow-up): read whatever
+        # Nest/Buffer ROI 2.lmt_binary_search.py propagated into this same
+        # input file, purely to propagate it again into this script's own
+        # output below -- this script does not use the ROI for anything
+        # itself (no overlay, no filtering).
+        nest_roi, buffer_roi = load_roi_metadata_from_db(conn)
     finally:
         conn.close()
 
@@ -250,6 +257,13 @@ def run(analysis_db, video_paths, output_folder, n_samples, qc_mode, overwrite=F
 
     conn = sqlite3.connect(out_db)
     pd.DataFrame(results).to_sql("QC_ASSUMED_SAMPLES", conn, if_exists="replace", index=False)
+
+    # Git Issue #22 (4.lmt_qc_validator.py follow-up): forward whatever
+    # Nest/Buffer ROI was read from this script's own input above into this
+    # pool's own output. Without this write, the ROI read above would stop
+    # here and never reach 4.lmt_qc_validator.py. No-ops if both are None.
+    write_roi_metadata(conn, animal_id, nest_roi, buffer_roi)
+
     conn.close()
 
     summary = (
