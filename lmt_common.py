@@ -1,6 +1,8 @@
 import os
 import re
 import cv2
+import pandas as pd
+from PIL import ImageDraw
 
 # Configurable constants
 DB_FPS           = 30    # LMT database frame rate
@@ -15,6 +17,133 @@ QC_MODE_DETECTED      = "DETECTED"
 QC_MODE_BINARY_SEARCH = "BINARY_SEARCH"
 QC_MODE_LOGIC         = "LOGIC"
 QC_MODE_ASSUMED       = "ASSUMED"
+
+# Git Issue #22 (+ follow-ups): Nest/Buffer ROI overlay drawing and
+# ROI_METADATA read/write. Originally implemented locally in
+# 2.lmt_binary_search.py; centralized here so 4.lmt_qc_validator.py can
+# draw the identical overlay (solid Nest / dashed Buffer) from the identical
+# ROI values, without a second, independently-drifting copy of this logic.
+DEFAULT_ROI_COLOR     = "yellow"
+DEFAULT_ROI_THICKNESS = 2
+
+
+def load_roi_metadata_from_db(conn):
+    """
+    Read the Nest/Buffer ROI 1.lmt_gap_fill.py used, from the ROI_METADATA
+    table (one row) it writes into its output SQLite, and that
+    2.lmt_binary_search.py / 3.lmt_qc_sampler.py propagate forward into
+    their own outputs (via write_roi_metadata()) so 4.lmt_qc_validator.py
+    can read it too, several steps downstream.
+
+    Returns (nest_roi, buffer_roi), each either a {"xmin","xmax","ymin",
+    "ymax"} dict or None if the table doesn't exist in `conn` (e.g. an
+    input file produced before this feature existed, or one that skipped a
+    step that would have propagated it).
+    """
+    cursor = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='ROI_METADATA'")
+    if cursor.fetchone() is None:
+        return None, None
+
+    df = pd.read_sql_query("SELECT * FROM ROI_METADATA LIMIT 1", conn)
+    if len(df) == 0:
+        return None, None
+    row = df.iloc[0]
+
+    nest_roi = {
+        "xmin": row["NEST_XMIN"], "xmax": row["NEST_XMAX"],
+        "ymin": row["NEST_YMIN"], "ymax": row["NEST_YMAX"],
+    }
+    buffer_roi = {
+        "xmin": row["BUFFER_XMIN"], "xmax": row["BUFFER_XMAX"],
+        "ymin": row["BUFFER_YMIN"], "ymax": row["BUFFER_YMAX"],
+    }
+    return nest_roi, buffer_roi
+
+
+def write_roi_metadata(conn, animal_id, nest_roi, buffer_roi):
+    """
+    Write (or overwrite) the one-row ROI_METADATA table into `conn`, so a
+    downstream script can read the same Nest/Buffer ROI back via
+    load_roi_metadata_from_db(). Used by 2.lmt_binary_search.py and
+    3.lmt_qc_sampler.py to propagate whatever ROI they read from their own
+    input forward into their own output -- without this, the ROI would
+    stop at whichever script last read it and never reach
+    4.lmt_qc_validator.py. (1.lmt_gap_fill.py writes this table directly
+    via pandas, not through this helper, since it computes the ROI itself
+    rather than reading it from an input file.)
+
+    No-ops (writes nothing, leaves any existing ROI_METADATA table alone)
+    if both nest_roi and buffer_roi are None -- there is nothing to
+    propagate, and writing an all-None row would be indistinguishable from
+    "this run legitimately had no ROI" versus "the table is simply absent".
+    """
+    if nest_roi is None and buffer_roi is None:
+        return
+    n = nest_roi or {"xmin": None, "xmax": None, "ymin": None, "ymax": None}
+    b = buffer_roi or {"xmin": None, "xmax": None, "ymin": None, "ymax": None}
+    row = pd.DataFrame([{
+        "ANIMALID":    animal_id,
+        "NEST_XMIN":   n["xmin"], "NEST_XMAX":   n["xmax"],
+        "NEST_YMIN":   n["ymin"], "NEST_YMAX":   n["ymax"],
+        "BUFFER_XMIN": b["xmin"], "BUFFER_XMAX": b["xmax"],
+        "BUFFER_YMIN": b["ymin"], "BUFFER_YMAX": b["ymax"],
+    }])
+    row.to_sql("ROI_METADATA", conn, if_exists="replace", index=False)
+
+
+def _draw_dashed_edge(draw, start, end, color, thickness, dash_length=8, gap_length=5):
+    """Draw one dashed straight edge (horizontal or vertical) between two points."""
+    x1, y1 = start
+    x2, y2 = end
+    if x1 == x2:  # vertical edge
+        y, y_end = min(y1, y2), max(y1, y2)
+        while y < y_end:
+            seg_end = min(y + dash_length, y_end)
+            draw.line([(x1, y), (x1, seg_end)], fill=color, width=thickness)
+            y = seg_end + gap_length
+    else:  # horizontal edge
+        x, x_end = min(x1, x2), max(x1, x2)
+        while x < x_end:
+            seg_end = min(x + dash_length, x_end)
+            draw.line([(x, y1), (seg_end, y1)], fill=color, width=thickness)
+            x = seg_end + gap_length
+
+
+def draw_roi_overlay(img, roi, color=DEFAULT_ROI_COLOR, thickness=DEFAULT_ROI_THICKNESS, dashed=False):
+    """
+    Git Issue #22 (+ follow-ups): draw a Nest or Buffer ROI as an outline
+    rectangle on a PIL Image, in place, and return it. Nest ROI is drawn
+    solid; Buffer ROI is drawn dashed, so the two stay visually
+    distinguishable while sharing the same colour/thickness. Used by both
+    2.lmt_binary_search.py and 4.lmt_qc_validator.py so their overlays
+    render identically.
+
+    roi uses the same {"xmin","xmax","ymin","ymax"} dict shape as
+    1.lmt_gap_fill.py's NEST/NEST_BUFFER, persisted into that script's
+    output SQLite (ROI_METADATA table) and read back via
+    load_roi_metadata_from_db() -- no script downstream of
+    1.lmt_gap_fill.py accepts ROI values on its own command line.
+    MASS_X/MASS_Y and video pixel coordinates share the same coordinate
+    space in this pipeline, so the bounds are drawn directly with no
+    rescaling.
+
+    Outline-only, never filled, so the overlay marks the boundary without
+    covering the animal or nest contents underneath it (non-obscuring).
+    Call this before any thumbnail/resize of `img` so the rectangle is
+    drawn in the same pixel space as roi, then let the resize scale the
+    whole image (overlay included) down together.
+    """
+    draw = ImageDraw.Draw(img)
+    x0, y0, x1, y1 = roi["xmin"], roi["ymin"], roi["xmax"], roi["ymax"]
+    if not dashed:
+        draw.rectangle([x0, y0, x1, y1], outline=color, width=thickness)
+    else:
+        _draw_dashed_edge(draw, (x0, y0), (x1, y0), color, thickness)  # top
+        _draw_dashed_edge(draw, (x0, y1), (x1, y1), color, thickness)  # bottom
+        _draw_dashed_edge(draw, (x0, y0), (x0, y1), color, thickness)  # left
+        _draw_dashed_edge(draw, (x1, y0), (x1, y1), color, thickness)  # right
+    return img
 
 
 def get_start_frame(video_name):
