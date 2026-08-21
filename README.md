@@ -27,7 +27,10 @@ process performed.
 
 Each script's SQLite output is the next script's SQLite input; video files are
 re-supplied independently at each step that needs them (scripts 2, 3, and 4)
-rather than being passed along in the database.
+rather than being passed along in the database. The Nest/Buffer ROI is the
+one exception: `1.lmt_gap_fill.py` now persists the ROI it was run with
+(`ROI_METADATA` table) into its output SQLite, and `2.lmt_binary_search.py`
+reads it back automatically from that same file.
 
 ## Setup & Running
 
@@ -143,16 +146,40 @@ uv run python 1.lmt_gap_fill.py -i "/path/to/input/<*_processed>.sqlite" -o "/pa
 | `-v`, `--videos` | one or more paths | LMT video file(s) (`*.mp4`) covering the gaps to review. |
 | `-o`, `--output-folder` | directory | Where the resulting SQLite/report is written. |
 
-**Optional:** none, these three are the only CLI arguments; everything
-else (thresholds, review interval, etc.) is a hardcoded module constant,
-unchanged by this issue.
+**Optional:**
 
-**Example:**
+| Argument | Default | Controls |
+|---|---|---|
+| `--show-nest-roi` | off | Overlay the Nest ROI rectangle (**solid** outline) on all three review frames (before/QC/after). |
+| `--show-buffer-roi` | off | Overlay the Buffer ROI rectangle (**dashed** outline, to stay visually distinct from the solid Nest ROI) on all three review frames. |
+| `--roi-color` | `yellow` | Outline colour for **both** the Nest and Buffer ROI overlays (any PIL colour name or hex string, e.g. `yellow` or `#FFFF00`). |
+| `--roi-thickness` | `2` | Outline thickness in pixels for **both** overlays. |
+
+**Neither ROI can be supplied on this script's command line at all** — there
+is no `--nest-*`/`--buffer-*` flag here. Both are read exclusively from the
+input file's `ROI_METADATA` table (written by `1.lmt_gap_fill.py`). If
+`--show-nest-roi` and/or `--show-buffer-roi` is passed and the corresponding
+ROI isn't available there (e.g. an input file from an older
+`1.lmt_gap_fill.py`), the script errors out at startup — re-run
+`1.lmt_gap_fill.py` with the current version rather than trying to supply the
+ROI here.
+
+Thresholds, review interval, etc. remain hardcoded module constants, unaffected by any of the above.
+
+**Example (no overlay, unchanged from before):**
 ```bash
-uv run python 2.lmt_binary_search.py -i "/path/to/input/lmt_gap_fill_A<animal_id>_<date>.sqlite" -v /path/to/videos/*.mp4 -o "/path/to/output/<output_directory>"
+uv run python 2.lmt_binary_search.py -i "/path/to/input/lmt_gap_fill_A<animal_id>_<date>.sqlite" -v "/path/to/videos/*.mp4" -o "/path/to/output/<output_directory>"
 ```
 
-> **Note:** If LMT is configured to request raw videos without overlays, both raw and overlay `.mp4` files may be created in the same folder. Using `*.mp4` will select **all** `.mp4` files, so make sure the video pattern/path matches the files you intend to use.
+**Example (both overlays on, Nest and Buffer ROI auto-loaded from the input file):**
+```bash
+uv run python 2.lmt_binary_search.py -i "/path/to/input/lmt_gap_fill_A<animal_id>_<date>.sqlite" -v "/path/to/videos/*.mp4" -o "/path/to/output/<output_directory>" --show-nest-roi --show-buffer-roi
+```
+
+**Example (overlays on, with a custom shared colour/thickness):**
+```bash
+uv run python 2.lmt_binary_search.py -i "/path/to/input/lmt_gap_fill_A<animal_id>_<date>.sqlite" -v "/path/to/videos/*.mp4" -o "/path/to/output/<output_directory>" --show-nest-roi --show-buffer-roi --roi-color "#00FFFF" --roi-thickness 4
+```
 
 ### `3.lmt_qc_sampler.py`
 
@@ -174,10 +201,8 @@ uv run python 2.lmt_binary_search.py -i "/path/to/input/lmt_gap_fill_A<animal_id
 
 **Example:**
 ```bash
-uv run python 3.lmt_qc_sampler.py -i "/path/to/input/lmt_binary_search_A<animal_id>_<YYYY-MM-DD_HH-MM-SS>.sqlite" -v /path/to/videos/*.mp4 -o "/path/to/output/<output_directory>" -n 150 --pools DETECTED LOGIC
+uv run python 3.lmt_qc_sampler.py -i "/path/to/input/lmt_binary_search_A<animal_id>_<YYYY-MM-DD_HH-MM-SS>.sqlite" -v "/path/to/videos/*.mp4" -o "/path/to/output/<output_directory>" -n 150 --pools DETECTED LOGIC
 ```
-
-> **Note:** If LMT is configured to request raw videos without overlays, both raw and overlay `.mp4` files may be created in the same folder. Using `*.mp4` will select **all** `.mp4` files, so make sure the video pattern/path matches the files you intend to use.
 
 ### `4.lmt_qc_validator.py`
 
@@ -196,10 +221,8 @@ uv run python 3.lmt_qc_sampler.py -i "/path/to/input/lmt_binary_search_A<animal_
 
 **Example:**
 ```bash
-uv run python 4.lmt_qc_validator.py -i "/path/to/input/lmt_qc_sampler_<qc_mode>_A<animal_id>_<YYYY-MM-DD_HH-MM-SS>.sqlite" -o "/path/to/output/<screenshots_directory>" -v /path/to/videos/*.mp4
+uv run python 4.lmt_qc_validator.py -i "/path/to/input/lmt_qc_sampler_<qc_mode>_A<animal_id>_<YYYY-MM-DD_HH-MM-SS>.sqlite" -o "/path/to/output/<screenshots_directory>" -v "/path/to/videos/*.mp4"
 ```
-
-> **Note:** If LMT is configured to request raw videos without overlays, both raw and overlay `.mp4` files may be created in the same folder. Using `*.mp4` will select **all** `.mp4` files, so make sure the video pattern/path matches the files you intend to use.
 
 ---
 
@@ -403,7 +426,7 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
 
 | Output | Type | Purpose |
 |---|---|---|
-| `lmt_gap_fill_A<animal_id>_<YYYY-MM-DD_HH-MM-SS>.sqlite` | SQLite database, table `GAP_FILL_ANALYSIS` | Complete per-frame in-nest classification for one animal, including unresolved gaps flagged for script 2. |
+| `lmt_gap_fill_A<animal_id>_<YYYY-MM-DD_HH-MM-SS>.sqlite` | SQLite database, tables `GAP_FILL_ANALYSIS` + `ROI_METADATA` | Complete per-frame in-nest classification for one animal, including unresolved gaps flagged for script 2, plus (Git Issue #22) the Nest/Buffer ROI this run used. |
 
 `GAP_FILL_ANALYSIS` columns:
 
@@ -415,6 +438,14 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
 | `GAP_START_FRAME` | For `ASSUMED` rows, the last detected frame *before* the gap; `None` for `DETECTED` rows. |
 | `GAP_END_FRAME` | For `ASSUMED` rows, the first detected frame *after* the gap; `None` for `DETECTED` rows. |
 | `ANIMALID` | The animal ID this run was filtered to (the `--animal-id` argument), on every row. |
+
+`ROI_METADATA` (Git Issue #22): one row, written alongside `GAP_FILL_ANALYSIS` in the same output file, recording exactly the ROI values this run was given —
+`ANIMALID`, `NEST_XMIN`, `NEST_XMAX`, `NEST_YMIN`, `NEST_YMAX`, `BUFFER_XMIN`,
+`BUFFER_XMAX`, `BUFFER_YMIN`, `BUFFER_YMAX`. This exists so `2.lmt_binary_search.py`
+can automatically reuse the same Nest ROI for its optional on-frame overlay
+(and both ROIs for its summary report) without the user retyping them —
+see that script's **Do NOT Modify** notes below for why there's no CLI
+override for the Nest ROI specifically.
 
 ### Processing Steps
 1. **Load one animal's detections**, ordered by `FRAMENUMBER`, using a
@@ -448,7 +479,8 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
      guess here would silently corrupt the in-nest time estimate.
 5. **Reassemble the full timeline** by combining the detected rows and the
    generated assumed rows and sorting by `FRAMENUMBER`, then write the
-   result to a new, timestamped SQLite file.
+   result to a new, timestamped SQLite file, along with the `ROI_METADATA`
+   row for this run (Git Issue #22).
 
 ### Key Design Decisions & Assumptions
 - **Defensive uniqueness check, not a repeat of `0.Preprocessing.py`'s
@@ -496,6 +528,14 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
 - `GAP_START_FRAME` / `GAP_END_FRAME` must remain "last detected frame
   before" / "first detected frame after". Script 2 groups and classifies
   gaps using this exact definition.
+- Table name `ROI_METADATA` and its eight column names (`ANIMALID`,
+  `NEST_XMIN`/`NEST_XMAX`/`NEST_YMIN`/`NEST_YMAX`,
+  `BUFFER_XMIN`/`BUFFER_XMAX`/`BUFFER_YMIN`/`BUFFER_YMAX`) must keep these
+  exact names (Git Issue #22): `2.lmt_binary_search.py` reads this table by
+  name and these columns by name to auto-load the Nest/Buffer ROI; renaming
+  or dropping any of them breaks that auto-load (silently falling back to
+  "no ROI available" rather than erroring, since an absent table and a
+  renamed one look the same to that script).
 
 ### Open Source Notes
 - **External dependencies**: `pandas`, `numpy` (used for the vectorized
@@ -503,7 +543,10 @@ position), `ANIMALID` (filter, passed as a bound SQL parameter).
 - **Standard library**: `argparse`, `os`, `sqlite3`, `sys`, `datetime`.
 - **Configuration files / environment variables**: none; animal ID and ROI
   bounds are CLI arguments (`--animal-id`, `--nest-*`, `--buffer-*`), all
-  required with no defaults — see the **CLI Reference** section above.
+  required with no defaults — see the **CLI Reference** section above. The
+  same `--nest-*`/`--buffer-*` values are also persisted into this run's
+  output SQLite (`ROI_METADATA` table, Git Issue #22) for
+  `2.lmt_binary_search.py` to read back automatically.
 - **Expected directory structure**: none required beyond a writable output
   folder.
 - **Platform assumptions**: none, fully headless, no GUI toolkit is used.
@@ -533,11 +576,27 @@ gap has been processed, it writes the final per-frame classification (with
 `FILL_SOURCE`) plus a detailed
 plain-text summary report with internal integrity checks.
 
+Two smaller, related pieces of behavior live in this script too:
+- **CLI-input logging (Git Issue #21).** The summary report records the
+  exact source database, video file(s), and output folder this run was
+  given, so a manual mistake (wrong videos, wrong output folder, etc.) is
+  traceable after the fact from the report alone.
+- **Nest/Buffer ROI overlay (Git Issue #22, + follow-up).** With
+  `--show-nest-roi` and/or `--show-buffer-roi`, the corresponding ROI
+  rectangle is drawn on all three review frames — Nest ROI **solid**,
+  Buffer ROI **dashed**, so the two stay visually distinguishable while
+  sharing the same colour/thickness. Both ROIs are read exclusively from
+  the input file's `ROI_METADATA` table (written by `1.lmt_gap_fill.py`) —
+  **there is no way to supply either one on this script's own command
+  line**, so neither overlay can ever silently drift from the ROI
+  `1.lmt_gap_fill.py` (and hence `GAP_FILL_ANALYSIS`'s `IN_NEST` values)
+  actually used.
+
 ### Inputs
 
 | Input | Type | Purpose |
 |---|---|---|
-| `lmt_gap_fill_A<animal_id>_<date>.sqlite` (script 1 output) | SQLite database, table `GAP_FILL_ANALYSIS` | Per-frame classification with unresolved (`IN_NEST = -1`) gaps to review. |
+| `lmt_gap_fill_A<animal_id>_<date>.sqlite` (script 1 output) | SQLite database, tables `GAP_FILL_ANALYSIS` + `ROI_METADATA` | Per-frame classification with unresolved (`IN_NEST = -1`) gaps to review, plus (if present) the Nest/Buffer ROI that produced it. |
 | LMT video files (`*.mp4`) | Video | Source frames for the reviewer to visually classify. |
 | Output folder | Directory | Where results are written. |
 
@@ -549,12 +608,20 @@ this by more than a small tolerance is flagged to the user, and a video
 whose filename cannot be parsed is excluded and reported rather than
 silently dropped.
 
+**Neither the Nest ROI nor the Buffer ROI is a CLI input to this script at
+all** (Git Issue #22 follow-up): both are read exclusively from the input
+file's `ROI_METADATA` table. If `--show-nest-roi` and/or `--show-buffer-roi`
+is passed and the corresponding ROI isn't available there (e.g. the input
+predates the current `1.lmt_gap_fill.py`), the script errors out at startup
+rather than silently skipping the overlay or falling back to some other
+value.
+
 ### Outputs
 
 | Output | Type | Purpose |
 |---|---|---|
 | `lmt_binary_search_A<animal_id>_<YYYY-MM-DD_HH-MM-SS>.sqlite` (or `lmt_binary_search_Aunknown_...` if the source lacked `ANIMALID`) | SQLite database, table `GAP_FILL_ANALYSIS` | Final per-frame classification with fill-method bookkeeping, for QC sampling in script 3. |
-| `LMT_Summary_A<animal_id>_<YYYY-MM-DD_HH-MM-SS>.txt` | Text report | Audit of detection counts, gap types, binary-search results, and internal balance/integrity checks. |
+| `LMT_Summary_A<animal_id>_<YYYY-MM-DD_HH-MM-SS>.txt` | Text report | Audit of detection counts, gap types, binary-search results, internal balance/integrity checks, the CLI inputs this run used (Git Issue #21), and the Nest/Buffer ROI values and their source — `"auto-loaded from 1.lmt_gap_fill.py output"` or `"not provided"` (Git Issue #22; there is no `"CLI"` source anymore — see Do NOT Modify below). |
 | `_binsearch_tmp/` | Temp image cache | Scratch PNGs extracted during review; deleted on successful completion or if the window is closed early. |
 
 `GAP_FILL_ANALYSIS` columns (extends script 1's schema):
@@ -770,6 +837,26 @@ inconsistencies.
   raises rather than continues if they disagree. The report's numbers are
   used as the pipeline's audit trail, so an inconsistency there should stop
   the run rather than be written down as if it were trustworthy.
+- **Nest/Buffer ROI overlay is drawn in one place only (Git Issue #22, +
+  follow-up).** `_load_frame_into_label()` is the single method all three
+  panels (before/QC/after) call to load their image; both overlays are
+  drawn there, once, before the thumbnail resize, using one shared
+  `self.nest_roi`/`self.buffer_roi`/`self.roi_color`/`self.roi_thickness`.
+  This is what guarantees each overlay is identical across all three
+  panels — it is a single code path per ROI, not three separate
+  implementations that could drift from each other. `draw_roi_overlay()`
+  draws the Nest ROI solid and the Buffer ROI dashed (via a small
+  dashed-edge helper), sharing the same colour/thickness so the two read
+  as one coherent overlay rather than two unrelated ones.
+- **Neither ROI has a CLI override, by design (Git Issue #22
+  follow-up).** Both are read exclusively from the input file's
+  `ROI_METADATA` table (written by `1.lmt_gap_fill.py`). Allowing a
+  different value on this script's own command line would let the
+  displayed overlay(s) silently diverge from the ROI that actually
+  produced `GAP_FILL_ANALYSIS`'s `IN_NEST` values for that file — a
+  mismatch that would look plausible on screen while being wrong. If a use
+  case genuinely needs a different ROI, the correct fix is re-running
+  `1.lmt_gap_fill.py`, not overriding it here.
 
 ### Do NOT Modify
 - `DB_FPS = 30` and `FRAME_CONVERSION = 2` encode the relationship between
@@ -789,10 +876,27 @@ inconsistencies.
   `compute_qc_pool_mask()` still reads one if present, purely to keep
   reading older files generated before this change (do not remove that
   fallback).
+- **Do not add a `--nest-*`/`--buffer-*` CLI argument to this script (Git
+  Issue #22 follow-up).** Both ROIs are intentionally sourced only from the
+  input file's `ROI_METADATA` table; re-adding a CLI override for either
+  would reopen the silent-drift risk described above. If a use case
+  genuinely needs a different ROI than what `1.lmt_gap_fill.py` used, the
+  correct fix is re-running `1.lmt_gap_fill.py`, not overriding it here.
+- `ROI_METADATA`'s table/column names (see script 1's Do NOT Modify notes)
+  are read by name in `_load_roi_metadata_from_db()`; renaming or dropping
+  any of them makes both the Nest and Buffer ROI silently unavailable
+  (`--show-nest-roi`/`--show-buffer-roi` then error out at startup) rather
+  than raising an obvious error at the point of the rename.
+- **Nest ROI must stay solid and Buffer ROI must stay dashed** in
+  `draw_roi_overlay()` (`dashed=False`/`dashed=True`) — this is the only
+  thing visually distinguishing the two when both overlays and the same
+  `--roi-color` are enabled at once; making both solid (or both dashed)
+  would make them indistinguishable on screen.
 
 ### Open Source Notes
 - **External dependencies**: `opencv-python` (`cv2`), `numpy`, `pandas`,
-  `Pillow` (`PIL.Image`, `PIL.ImageTk`), `tkinter`.
+  `Pillow` (`PIL.Image`, `PIL.ImageTk`, `PIL.ImageDraw`, `PIL.ImageColor`),
+  `tkinter`.
 - **Standard library**: `argparse`, `os`, `re`, `copy`, `sqlite3`, `sys`,
   `datetime`, `time`.
 - **Configuration files / environment variables**: none; database, video(s),
@@ -803,6 +907,11 @@ inconsistencies.
   constants in this script. `DB_FPS`, `FRAME_CONVERSION`, and
   `FPS_TOLERANCE = 0.5` are not hardcoded here, they're imported from
   `lmt_common.py`, the module shared with scripts 3 and 4.
+  `DEFAULT_ROI_COLOR = "yellow"` and `DEFAULT_ROI_THICKNESS = 2` (Git
+  Issue #22) are this script's own module-level defaults for
+  `--roi-color`/`--roi-thickness`, shared by both the `--show-nest-roi`
+  and `--show-buffer-roi` overlays. Neither ROI is a CLI argument at all —
+  see Inputs above.
 - **Expected directory structure**: none required beyond a writable output
   folder (`_binsearch_tmp` is created automatically and cleaned up
   automatically, including on early window close).
@@ -1153,7 +1262,7 @@ No video files, SQLite databases, or GUI interaction are required, the suite run
 - `tests/test_gap_fill_logic.py` (1.lmt_gap_fill.py): the gap-expansion and ROI-membership vectorization core.
 - `tests/test_type00_gap_review.py` (2.lmt_binary_search.py): `_build_type00_checkpoint_tasks`, the type-00 branch of `_handle_answer` (including the checkpoint-to-binary-search hand-off on the first IN answer), and Skip/Undo/Redo against type-00 tasks.
 - `tests/test_preprocessing_dedup.py` (0.Preprocessing.py, plus one end-to-end case into 1.lmt_gap_fill.py): `process_database`'s deduplication (Case A exact duplicates, Case B conflicting rows, distinct-`ANIMALID` rows left alone, `-1` `FRONT_*`/`BACK_*` rows no longer removed, a surrogate primary key excluded from identity comparison), the original file being left untouched, the overwrite guard, a missing `DETECTION` table, and `1.lmt_gap_fill.py`'s duplicate-`FRAMENUMBER` defensive check (Issue #5) both firing on raw non-deduplicated input and staying silent on deduplicated input. Runs against real temporary SQLite files (via `tmp_path`), not synthetic in-memory DataFrames, since deduplication is fundamentally a file-level operation.
-- **Not covered**: `write_summary_report`'s and `_finish`'s integrity/balance-check logic, any of the four scripts' CLI argument parsing, and the interactive Tkinter GUI code paths in scripts 2 and 4 (image display, button/keyboard callbacks wiring, window lifecycle).
+- **Not covered**: `write_summary_report`'s and `_finish`'s integrity/balance-check logic, any of the four scripts' CLI argument parsing, the interactive Tkinter GUI code paths in scripts 2 and 4 (image display, button/keyboard callbacks wiring, window lifecycle), and — as of Git Issue #21/#22 — the summary report's CLI-input/ROI-logging lines, `draw_roi_overlay()`/`_draw_dashed_edge()`, `_load_frame_into_label()`'s overlay calls, `_load_roi_metadata_from_db()`, `ROI_METADATA` persistence in `1.lmt_gap_fill.py`, and this script's `--roi-color`/`--roi-thickness` CLI validation (`_validate_cli_args`; there is no ROI-value CLI validation left to cover, since neither ROI is a CLI argument anymore). These were exercised manually (real pipeline runs, a headless-Tk/Xvfb harness, and direct calls against synthetic data) rather than by an addition to this pytest suite; adding automated coverage for them is a natural follow-up.
   
 ### Key Design Decisions & Assumptions
 - Scripts are loaded by file path, not imported normally. The pipeline's numerically-prefixed filenames (1.lmt_gap_fill.py, etc.) aren't valid Python module names, so tests/conftest.py loads them via importlib.util.spec_from_file_location rather than a standard import statement.
