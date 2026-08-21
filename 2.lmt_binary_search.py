@@ -280,6 +280,7 @@ def build_full_gap_type_map(df_all):
 
 # Consolidated summary report
 def write_summary_report(report_path, source_db_path,
+                         video_paths, output_folder,  # CLI inputs (Git Issue #21): logged below for traceability
                          df_all, df_out_assumed,
                          final_clf,            # dict: frame -> final IN_NEST value
                          searchable_frames,    # set: frames routed to binary-search reviewer
@@ -433,7 +434,9 @@ def write_summary_report(report_path, source_db_path,
 
         f.write("LMT Pipeline Summary Report\n")
         f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"Source database: {source_db_path}\n")
+        f.write(f"Source database (-i/--input): {source_db_path}\n")
+        f.write(f"Video file(s) (-v/--videos): {', '.join(video_paths)}\n")
+        f.write(f"Output folder (-o/--output-folder): {output_folder}\n")
         f.write("\n")
 
         # Section 0: Timing
@@ -1296,6 +1299,8 @@ class BinarySearchGUI:
             write_summary_report(
                 report_path,
                 self.db_path,
+                self.video_paths,
+                self.output_folder,
                 self.df_all,
                 df_out,
                 final_clf,
