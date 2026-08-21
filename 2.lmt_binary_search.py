@@ -12,10 +12,17 @@ from datetime import datetime
 import time
 from tkinter import *
 from tkinter import messagebox
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw, ImageColor
 
 MIN_GAP_DURATION_FOR_BINARY_SEARCH = 30  # seconds
 FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES = 1 # minutes
+
+# Git Issue #22: Nest and Buffer ROI overlay on the 3 review frames. Off by default
+# (--show-nest-roi and/or --show-buffer-roi), so existing behaviour is unchanged unless a user opts
+# in. Colour/thickness are configurable via --roi-color/--roi-thickness;
+# these are just the argparse defaults.
+DEFAULT_ROI_COLOR     = "yellow"
+DEFAULT_ROI_THICKNESS = 2
 
 # Git Issue #19 (reopened for performance): for type-00 (OUT->OUT) gaps
 # above MIN_GAP_DURATION_FOR_BINARY_SEARCH, sample left-to-right at this
@@ -115,6 +122,88 @@ def extract_frame_to_path(video_map, global_frame, out_path):
         if _read_frame_from_video(video_entry, resolved_frame, out_path):
             return resolved_frame
     return None
+
+def _draw_dashed_edge(draw, start, end, color, thickness, dash_length=8, gap_length=5):
+    """Draw one dashed straight edge (horizontal or vertical) between two points."""
+    x1, y1 = start
+    x2, y2 = end
+    if x1 == x2:  # vertical edge
+        y, y_end = min(y1, y2), max(y1, y2)
+        while y < y_end:
+            seg_end = min(y + dash_length, y_end)
+            draw.line([(x1, y), (x1, seg_end)], fill=color, width=thickness)
+            y = seg_end + gap_length
+    else:  # horizontal edge
+        x, x_end = min(x1, x2), max(x1, x2)
+        while x < x_end:
+            seg_end = min(x + dash_length, x_end)
+            draw.line([(x, y1), (seg_end, y1)], fill=color, width=thickness)
+            x = seg_end + gap_length
+
+def draw_roi_overlay(img, roi, color=DEFAULT_ROI_COLOR, thickness=DEFAULT_ROI_THICKNESS, dashed=False):
+    """
+    Git Issue #22 (+ follow-up): draw a Nest or Buffer ROI as an outline
+    rectangle on a PIL Image, in place, and return it. Nest ROI is drawn
+    solid; Buffer ROI is drawn dashed, so the two stay visually
+    distinguishable while sharing the same colour/thickness.
+
+    roi uses the same {"xmin","xmax","ymin","ymax"} dict shape as
+    1.lmt_gap_fill.py's NEST/NEST_BUFFER, persisted into that script's
+    output SQLite (ROI_METADATA table) and read back via
+    _load_roi_metadata_from_db() -- this script no longer accepts ROI
+    values on its own command line. MASS_X/MASS_Y and video pixel
+    coordinates share the same coordinate space in this pipeline, so the
+    bounds are drawn directly with no rescaling.
+
+    Outline-only, never filled, so the overlay marks the boundary without
+    covering the animal or nest contents underneath it (non-obscuring).
+    Call this before any thumbnail/resize of `img` so the rectangle is
+    drawn in the same pixel space as roi, then let the resize scale the
+    whole image (overlay included) down together.
+    """
+    draw = ImageDraw.Draw(img)
+    x0, y0, x1, y1 = roi["xmin"], roi["ymin"], roi["xmax"], roi["ymax"]
+    if not dashed:
+        draw.rectangle([x0, y0, x1, y1], outline=color, width=thickness)
+    else:
+        _draw_dashed_edge(draw, (x0, y0), (x1, y0), color, thickness)  # top
+        _draw_dashed_edge(draw, (x0, y1), (x1, y1), color, thickness)  # bottom
+        _draw_dashed_edge(draw, (x0, y0), (x0, y1), color, thickness)  # left
+        _draw_dashed_edge(draw, (x1, y0), (x1, y1), color, thickness)  # right
+    return img
+
+def _load_roi_metadata_from_db(conn):
+    """
+    Git Issue #22 follow-up: read the Nest/Buffer ROI 1.lmt_gap_fill.py used,
+    from the ROI_METADATA table it writes (one row, columns NEST_XMIN/
+    NEST_XMAX/NEST_YMIN/NEST_YMAX/BUFFER_XMIN/BUFFER_XMAX/BUFFER_YMIN/
+    BUFFER_YMAX) into its output SQLite -- the same file passed as -i/--input
+    here. This is now the ONLY source of ROI values for this script; there
+    is no CLI way to supply or override them.
+
+    Returns (nest_roi, buffer_roi), each either a {"xmin","xmax","ymin",
+    "ymax"} dict or None if the table doesn't exist (e.g. an input file
+    produced by an older 1.lmt_gap_fill.py that predates this table).
+    """
+    cursor = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='ROI_METADATA'")
+    if cursor.fetchone() is None:
+        return None, None
+
+    row = pd.read_sql_query("SELECT * FROM ROI_METADATA LIMIT 1", conn)
+    if len(row) == 0:
+        return None, None
+    row = row.iloc[0]
+
+    nest_roi = {
+        "xmin": row["NEST_XMIN"], "xmax": row["NEST_XMAX"],
+        "ymin": row["NEST_YMIN"], "ymax": row["NEST_YMAX"],
+    }
+    buffer_roi = {
+        "xmin": row["BUFFER_XMIN"], "xmax": row["BUFFER_XMAX"],
+        "ymin": row["BUFFER_YMIN"], "ymax": row["BUFFER_YMAX"],
+    }
+    return nest_roi, buffer_roi
 
 # Gap boundary classification
 def classify_gap_type(gap_start_frame, gap_end_frame, in_nest_lookup):
@@ -280,7 +369,9 @@ def build_full_gap_type_map(df_all):
 
 # Consolidated summary report
 def write_summary_report(report_path, source_db_path,
-                         video_paths, output_folder,  # CLI inputs (Git Issue #21): logged below for traceability
+                         video_paths, output_folder,  # CLI inputs (Issue #21): logged below for traceability
+                         nest_roi, buffer_roi,  # Issue #22: ROIs used for the overlay/report, logged below
+                         nest_roi_source, buffer_roi_source,  # "auto-loaded from 1.lmt_gap_fill.py output" / None
                          df_all, df_out_assumed,
                          final_clf,            # dict: frame -> final IN_NEST value
                          searchable_frames,    # set: frames routed to binary-search reviewer
@@ -310,6 +401,17 @@ def write_summary_report(report_path, source_db_path,
         secs = _frames_to_seconds(n_frames)
         dec  = decimal_hours(secs)
         return f"{n_frames:,}", seconds_to_hms(secs), f"{dec:.3f}"
+
+    def fmt_roi(roi, source):
+        # Git Issue #22: format a {"xmin","xmax","ymin","ymax"} ROI dict
+        # (same shape as 1.lmt_gap_fill.py's NEST/NEST_BUFFER) for the
+        # report, noting whether it came from this run's CLI args or was
+        # auto-loaded from 1.lmt_gap_fill.py's output (Issue #22 follow-up).
+        if roi is None:
+            return "not provided"
+        base = (f"xmin={roi['xmin']}, xmax={roi['xmax']}, "
+                f"ymin={roi['ymin']}, ymax={roi['ymax']}")
+        return f"{base}  (source: {source})" if source else base
 
     # 0.  BUILD COMPLETE GAP TYPE MAP
     full_gap_type_map = build_full_gap_type_map(df_all)
@@ -437,6 +539,8 @@ def write_summary_report(report_path, source_db_path,
         f.write(f"Source database (-i/--input): {source_db_path}\n")
         f.write(f"Video file(s) (-v/--videos): {', '.join(video_paths)}\n")
         f.write(f"Output folder (-o/--output-folder): {output_folder}\n")
+        f.write(f"Nest ROI (1.lmt_gap_fill.py's --nest-xmin/--nest-xmax/--nest-ymin/--nest-ymax): {fmt_roi(nest_roi, nest_roi_source)}\n")
+        f.write(f"Buffer ROI (--buffer-xmin/--buffer-xmax/--buffer-ymin/--buffer-ymax): {fmt_roi(buffer_roi, buffer_roi_source)}\n")
         f.write("\n")
 
         # Section 0: Timing
@@ -693,7 +797,9 @@ def write_summary_report(report_path, source_db_path,
 # Main GUI class
 class BinarySearchGUI:
 
-    def __init__(self, root, db_path, video_paths, output_folder):
+    def __init__(self, root, db_path, video_paths, output_folder,
+                 show_nest_roi=False, show_buffer_roi=False,
+                 roi_color=DEFAULT_ROI_COLOR, roi_thickness=DEFAULT_ROI_THICKNESS):
         self.root = root
         self.root.title("LMT Binary Search Gap Filler")
         self.root.geometry("1600x950")
@@ -702,6 +808,25 @@ class BinarySearchGUI:
         self.output_folder     = output_folder
         self.video_paths       = list(video_paths)
         self.video_map         = []
+
+        # Git Issue #22 (follow-up): neither Nest nor Buffer ROI can be
+        # supplied on this script's CLI -- both are always read from the
+        # input SQLite's ROI_METADATA table (written by 1.lmt_gap_fill.py),
+        # so there is exactly one source of truth for which ROI was
+        # actually used, and no risk of this script's overlay silently
+        # drifting from the ROI 1.lmt_gap_fill.py actually used to fill
+        # gaps. Populated in _start(); both None until then, and stay None
+        # if ROI_METADATA is absent (e.g. an input file from an older
+        # 1.lmt_gap_fill.py). Nest ROI is drawn solid, Buffer ROI dashed
+        # (see draw_roi_overlay), each independently toggled.
+        self.nest_roi           = None
+        self.buffer_roi         = None
+        self.nest_roi_source    = None
+        self.buffer_roi_source  = None
+        self.show_nest_roi      = show_nest_roi
+        self.show_buffer_roi    = show_buffer_roi
+        self.roi_color          = roi_color
+        self.roi_thickness      = roi_thickness
 
         self.df                = None
         self.df_all            = None
@@ -746,7 +871,39 @@ class BinarySearchGUI:
     def _start(self):
         conn = sqlite3.connect(self.db_path)
         self.df_all = pd.read_sql_query("SELECT * FROM GAP_FILL_ANALYSIS ORDER BY FRAMENUMBER", conn)
+
+        # Git Issue #22 follow-up: Nest ROI and Buffer ROI are both always
+        # read from this same input file's ROI_METADATA table (written by
+        # the current 1.lmt_gap_fill.py) -- there is no CLI override for
+        # either, so this is the only place either can ever be set.
+        self.nest_roi, self.buffer_roi = _load_roi_metadata_from_db(conn)
+        if self.nest_roi is not None:
+            self.nest_roi_source = "auto-loaded from 1.lmt_gap_fill.py output"
+        if self.buffer_roi is not None:
+            self.buffer_roi_source = "auto-loaded from 1.lmt_gap_fill.py output"
+
         conn.close()
+
+        missing_for_overlay = []
+        if self.show_nest_roi and self.nest_roi is None:
+            missing_for_overlay.append("Nest ROI (--show-nest-roi)")
+        if self.show_buffer_roi and self.buffer_roi is None:
+            missing_for_overlay.append("Buffer ROI (--show-buffer-roi)")
+        if missing_for_overlay:
+            messagebox.showerror(
+                "Error",
+                "The following overlay(s) were requested, but this input "
+                "SQLite has no ROI_METADATA table, so no matching ROI is "
+                "available:\n\n  " + "\n  ".join(missing_for_overlay) + "\n\n"
+                "Nest/Buffer ROI can only come from 1.lmt_gap_fill.py's "
+                "output (there is no --nest-*/--buffer-* override on this "
+                "script's CLI). This usually means the input file predates "
+                "the current 1.lmt_gap_fill.py.\n\n"
+                "Re-run 1.lmt_gap_fill.py with the current version, which "
+                "records the ROI(s) it used, then use that output as "
+                "-i/--input here."
+            )
+            return
 
         self.df = self.df_all[self.df_all["ASSUMPTION_TYPE"] == "ASSUMED"].copy().reset_index(drop=True)
 
@@ -884,6 +1041,17 @@ class BinarySearchGUI:
         resolved_frame = extract_frame_to_path(self.video_map, frame_number, frame_path)
         if resolved_frame is not None and os.path.exists(frame_path):
             img   = Image.open(frame_path)
+            # Git Issue #22 (+ follow-up): all 3 panels (left/center/right)
+            # call this same method, so drawing here -- before the
+            # thumbnail resize, using one shared self.nest_roi/self.
+            # buffer_roi/self.roi_color/self.roi_thickness -- is what keeps
+            # the overlay identical across all three frames. Buffer drawn
+            # first (dashed, larger/outer box) so Nest's solid outline
+            # renders on top at any corner where the two boxes touch.
+            if self.show_buffer_roi and self.buffer_roi is not None:
+                img = draw_roi_overlay(img, self.buffer_roi, self.roi_color, self.roi_thickness, dashed=True)
+            if self.show_nest_roi and self.nest_roi is not None:
+                img = draw_roi_overlay(img, self.nest_roi, self.roi_color, self.roi_thickness, dashed=False)
             img.thumbnail((480, 380))
             photo = ImageTk.PhotoImage(img)
             label.config(image=photo, text="")
@@ -1301,6 +1469,10 @@ class BinarySearchGUI:
                 self.db_path,
                 self.video_paths,
                 self.output_folder,
+                self.nest_roi,
+                self.buffer_roi,
+                self.nest_roi_source,
+                self.buffer_roi_source,
                 self.df_all,
                 df_out,
                 final_clf,
@@ -1347,6 +1519,40 @@ def _build_arg_parser():
         "-o", "--output-folder", required=True,
         help="Directory to write the resulting SQLite/report into.",
     )
+    # Git Issue #22 (follow-up): neither Nest nor Buffer ROI can be
+    # supplied here -- both are always read from the input SQLite's
+    # ROI_METADATA table (written by 1.lmt_gap_fill.py), so there is
+    # exactly one source of truth for which ROI was actually used to fill
+    # gaps, and no risk of this script's overlay silently drifting from it.
+    parser.add_argument(
+        "--show-nest-roi", action="store_true",
+        help="Overlay the Nest ROI rectangle (solid outline) on all three "
+             "review frames (before/QC/after). Off by default, so existing "
+             "behaviour is unchanged unless passed. The Nest ROI always "
+             "comes from the input SQLite's ROI_METADATA table (written by "
+             "1.lmt_gap_fill.py) -- there is no CLI override for it. "
+             "Errors out at startup if that table is absent.",
+    )
+    parser.add_argument(
+        "--show-buffer-roi", action="store_true",
+        help="Overlay the Buffer ROI rectangle (dashed outline, to stay "
+             "visually distinct from the solid Nest ROI) on all three "
+             "review frames. Off by default. Like the Nest ROI, the Buffer "
+             "ROI always comes from the input SQLite's ROI_METADATA table "
+             "-- there is no CLI override for it. Errors out at startup if "
+             "that table is absent.",
+    )
+    parser.add_argument(
+        "--roi-color", default=DEFAULT_ROI_COLOR,
+        help=f"Outline colour for both the Nest and Buffer ROI overlays "
+             f"(any PIL colour name or hex string, e.g. 'yellow' or "
+             f"'#FFFF00'). Default: {DEFAULT_ROI_COLOR}.",
+    )
+    parser.add_argument(
+        "--roi-thickness", type=int, default=DEFAULT_ROI_THICKNESS,
+        help=f"Outline thickness in pixels for both the Nest and Buffer "
+             f"ROI overlays. Default: {DEFAULT_ROI_THICKNESS}.",
+    )
     return parser
 
 
@@ -1359,6 +1565,19 @@ def _validate_cli_args(args):
         errors.append("Video file(s) not found:\n  " + "\n  ".join(missing_videos))
     if not os.path.isdir(args.output_folder):
         errors.append(f"Output folder not found: {args.output_folder}")
+
+    # Git Issue #22 (follow-up): no ROI values are parsed from the CLI at
+    # all anymore -- both Nest and Buffer ROI come only from the input
+    # SQLite's ROI_METADATA table, checked in BinarySearchGUI._start()
+    # (see the "no ROI available for a requested overlay" error there).
+    if args.roi_thickness <= 0:
+        errors.append(f"--roi-thickness must be a positive integer, got {args.roi_thickness}.")
+
+    try:
+        ImageColor.getrgb(args.roi_color)
+    except ValueError:
+        errors.append(f"--roi-color is not a recognized colour name or hex string: {args.roi_color!r}")
+
     if errors:
         for e in errors:
             print(f"ERROR: {e}", file=sys.stderr)
@@ -1368,11 +1587,16 @@ def _validate_cli_args(args):
 if __name__ == "__main__":
     import argparse
     import sys
-    from PIL import Image, ImageTk
+    from PIL import Image, ImageTk, ImageDraw, ImageColor
 
     cli_args = _build_arg_parser().parse_args()
     _validate_cli_args(cli_args)
 
     root = Tk()
-    app  = BinarySearchGUI(root, cli_args.input, cli_args.videos, cli_args.output_folder)
+    app  = BinarySearchGUI(
+        root, cli_args.input, cli_args.videos, cli_args.output_folder,
+        show_nest_roi=cli_args.show_nest_roi,
+        show_buffer_roi=cli_args.show_buffer_roi,
+        roi_color=cli_args.roi_color, roi_thickness=cli_args.roi_thickness,
+    )
     root.mainloop()
