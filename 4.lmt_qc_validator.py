@@ -6,14 +6,15 @@ import cv2
 
 from lmt_common import (DB_FPS, FRAME_CONVERSION, QC_MODE_DETECTED, QC_MODE_BINARY_SEARCH, 
                         QC_MODE_LOGIC, QC_MODE_ASSUMED, EXPECTED_VIDEO_FPS, build_video_map,
-                        find_nearest_frame_candidates, _read_frame_from_video, _release_all_captures, compute_qc_pool_mask)
+                        find_nearest_frame_candidates, _read_frame_from_video, _release_all_captures, compute_qc_pool_mask,
+                        DEFAULT_ROI_COLOR, DEFAULT_ROI_THICKNESS, draw_roi_overlay, load_roi_metadata_from_db)
 
 import sqlite3
 import pandas as pd
 from datetime import datetime
 from tkinter import *
 from tkinter import messagebox
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageColor
 
 date_string = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 animal_label = "Aunknown"
@@ -44,6 +45,7 @@ def extract_frame_to_label(video_map, global_frame, label_widget, thumb_size=(42
 
         if found and os.path.exists(tmp_path):
             img   = Image.open(tmp_path)
+            img   = _apply_roi_overlays(img)
             img.thumbnail(thumb_size)
             photo = ImageTk.PhotoImage(img)
             label_widget.config(image=photo, text="")
@@ -86,6 +88,36 @@ video_map         = []   # built from video_paths_list
 df                = None
 current_index     = 0
 active_qc_mode    = QC_MODE_ASSUMED   # resolved after load
+
+# Git Issue #22 (validator follow-up): Nest/Buffer ROI overlay state.
+# Populated once in start_qc() by reading this run's own -i/--input file's
+# ROI_METADATA table (forwarded here via 2.lmt_binary_search.py and
+# 3.lmt_qc_sampler.py); there is no --nest-*/--buffer-* CLI override, same
+# as 2.lmt_binary_search.py.
+nest_roi        = None
+buffer_roi      = None
+show_nest_roi   = False
+show_buffer_roi = False
+roi_color       = DEFAULT_ROI_COLOR
+roi_thickness   = DEFAULT_ROI_THICKNESS
+
+
+def _apply_roi_overlays(img):
+    """
+    Draw the Nest ROI (solid) and/or Buffer ROI (dashed) on a just-opened
+    PIL Image, before any thumbnail resize, using the module-level ROI
+    state set up in start_qc(). Called at every frame-display site in this
+    script -- extract_frame_to_label()'s three panels, and show_sample()'s
+    two single-panel fallbacks -- so the overlay is applied consistently
+    wherever a frame is shown here, not just the three-panel view.
+    Buffer is drawn first so Nest's solid edge sits on top where the two
+    boxes touch, matching 2.lmt_binary_search.py's draw order.
+    """
+    if show_buffer_roi and buffer_roi is not None:
+        img = draw_roi_overlay(img, buffer_roi, roi_color, roi_thickness, dashed=True)
+    if show_nest_roi and nest_roi is not None:
+        img = draw_roi_overlay(img, nest_roi, roi_color, roi_thickness, dashed=False)
+    return img
 
 # Database helpers
 def load_database():
@@ -265,6 +297,7 @@ def show_sample():
             single_frame.pack(side=LEFT, padx=20)
             if os.path.exists(image_path):
                 img   = Image.open(image_path)
+                img   = _apply_roi_overlays(img)
                 img.thumbnail((900, 700))
                 photo = ImageTk.PhotoImage(img)
                 image_label.config(image=photo)
@@ -280,6 +313,7 @@ def show_sample():
             messagebox.showerror("Missing Screenshot", image_path)
             return
         img   = Image.open(image_path)
+        img   = _apply_roi_overlays(img)
         img.thumbnail((900, 700))
         photo = ImageTk.PhotoImage(img)
         image_label.config(image=photo)
@@ -440,7 +474,37 @@ def next_sample():
         )
 
 def start_qc():
-    global df, current_index, video_map
+    global df, current_index, video_map, nest_roi, buffer_roi
+
+    # Git Issue #22 (validator follow-up): Nest/Buffer ROI, like everything
+    # else in this script, come only from the input SQLite -- there is no
+    # --nest-*/--buffer-* CLI override here either. Same ROI_METADATA
+    # table 1.lmt_gap_fill.py writes, forwarded into this file via
+    # 2.lmt_binary_search.py and 3.lmt_qc_sampler.py.
+    conn = sqlite3.connect(qc_db_path)
+    nest_roi, buffer_roi = load_roi_metadata_from_db(conn)
+    conn.close()
+
+    missing_for_overlay = []
+    if show_nest_roi and nest_roi is None:
+        missing_for_overlay.append("Nest ROI (--show-nest-roi)")
+    if show_buffer_roi and buffer_roi is None:
+        missing_for_overlay.append("Buffer ROI (--show-buffer-roi)")
+    if missing_for_overlay:
+        messagebox.showerror(
+            "Error",
+            "The following overlay(s) were requested, but this input "
+            "SQLite has no ROI_METADATA table, so no matching ROI is "
+            "available:\n\n  " + "\n  ".join(missing_for_overlay) + "\n\n"
+            "Nest/Buffer ROI can only come from 1.lmt_gap_fill.py's "
+            "output, forwarded through 2.lmt_binary_search.py and "
+            "3.lmt_qc_sampler.py (there is no --nest-*/--buffer-* "
+            "override on this script's CLI either). This usually means "
+            "an earlier file in this run's chain predates that support.\n\n"
+            "Re-run the pipeline from 1.lmt_gap_fill.py with the current "
+            "version, then use that chain's outputs as -i/--input here."
+        )
+        return
 
     # Build video map if videos were provided (optional; enables three-panel display)
     if video_paths_list:
@@ -538,6 +602,39 @@ def parse_args(argv=None):
         help="Optional LMT video file(s) (*.mp4); enables the three-panel "
              "before/QC-frame/after view for ASSUMED-type samples.",
     )
+    # Git Issue #22 (validator follow-up): no --nest-*/--buffer-* here --
+    # both ROIs come only from the input SQLite's ROI_METADATA table
+    # (forwarded from 1.lmt_gap_fill.py via 2.lmt_binary_search.py and
+    # 3.lmt_qc_sampler.py), same as 2.lmt_binary_search.py.
+    parser.add_argument(
+        "--show-nest-roi", action="store_true",
+        help="Overlay the Nest ROI rectangle (solid outline) on every "
+             "displayed frame. Off by default, so existing behaviour is "
+             "unchanged unless passed. The Nest ROI always comes from the "
+             "input SQLite's ROI_METADATA table -- there is no CLI "
+             "override for it. Errors out at startup if that table is "
+             "absent.",
+    )
+    parser.add_argument(
+        "--show-buffer-roi", action="store_true",
+        help="Overlay the Buffer ROI rectangle (dashed outline, to stay "
+             "visually distinct from the solid Nest ROI) on every "
+             "displayed frame. Off by default. Like the Nest ROI, always "
+             "comes from the input SQLite's ROI_METADATA table -- there "
+             "is no CLI override for it. Errors out at startup if that "
+             "table is absent.",
+    )
+    parser.add_argument(
+        "--roi-color", default=DEFAULT_ROI_COLOR,
+        help=f"Outline colour for both the Nest and Buffer ROI overlays "
+             f"(any PIL colour name or hex string, e.g. 'yellow' or "
+             f"'#FFFF00'). Default: {DEFAULT_ROI_COLOR}.",
+    )
+    parser.add_argument(
+        "--roi-thickness", type=int, default=DEFAULT_ROI_THICKNESS,
+        help=f"Outline thickness in pixels for both the Nest and Buffer "
+             f"ROI overlays. Default: {DEFAULT_ROI_THICKNESS}.",
+    )
     return parser.parse_args(argv)
 
 
@@ -550,6 +647,19 @@ def _validate_cli_args(args):
     missing_videos = [v for v in args.videos if not os.path.isfile(v)]
     if missing_videos:
         errors.append("Video file(s) not found:\n  " + "\n  ".join(missing_videos))
+
+    # Git Issue #22 (validator follow-up): no ROI values are parsed from
+    # the CLI at all -- both Nest and Buffer ROI come only from the input
+    # SQLite's ROI_METADATA table, checked in start_qc() (see the "no ROI
+    # available for a requested overlay" error there).
+    if args.roi_thickness <= 0:
+        errors.append(f"--roi-thickness must be a positive integer, got {args.roi_thickness}.")
+
+    try:
+        ImageColor.getrgb(args.roi_color)
+    except ValueError:
+        errors.append(f"--roi-color is not a recognized colour name or hex string: {args.roi_color!r}")
+
     if errors:
         for e in errors:
             print(f"ERROR: {e}", file=sys.stderr)
@@ -564,6 +674,10 @@ if __name__ == "__main__":
     qc_db_path        = cli_args.input
     screenshot_folder = cli_args.screenshot_folder
     video_paths_list  = list(cli_args.videos)
+    show_nest_roi     = cli_args.show_nest_roi
+    show_buffer_roi   = cli_args.show_buffer_roi
+    roi_color         = cli_args.roi_color
+    roi_thickness     = cli_args.roi_thickness
 
     root = Tk()
     root.title("LMT QC Validator")
