@@ -3,7 +3,10 @@ import os
 import re
 import cv2
 
-from lmt_common import (DB_FPS, FRAME_CONVERSION, EXPECTED_VIDEO_FPS, build_video_map, find_nearest_frame_candidates, _read_frame_from_video, _release_all_captures)
+from lmt_common import (DB_FPS, FRAME_CONVERSION, EXPECTED_VIDEO_FPS, build_video_map,
+                        find_nearest_frame_candidates, _read_frame_from_video, _release_all_captures,
+                        DEFAULT_ROI_COLOR, DEFAULT_ROI_THICKNESS, draw_roi_overlay,
+                        load_roi_metadata_from_db, write_roi_metadata)
 
 import sqlite3
 import numpy as np
@@ -17,12 +20,11 @@ from PIL import Image, ImageTk, ImageDraw, ImageColor
 MIN_GAP_DURATION_FOR_BINARY_SEARCH = 30  # seconds
 FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES = 1 # minutes
 
-# Git Issue #22: Nest and Buffer ROI overlay on the 3 review frames. Off by default
-# (--show-nest-roi and/or --show-buffer-roi), so existing behaviour is unchanged unless a user opts
-# in. Colour/thickness are configurable via --roi-color/--roi-thickness;
-# these are just the argparse defaults.
-DEFAULT_ROI_COLOR     = "yellow"
-DEFAULT_ROI_THICKNESS = 2
+# Git Issue #22 (+ follow-ups): _draw_dashed_edge(), draw_roi_overlay(),
+# and load_roi_metadata_from_db() now live in lmt_common.py, shared with
+# 4.lmt_qc_validator.py so both scripts' overlays render identically from
+# identical ROI values. DEFAULT_ROI_COLOR/DEFAULT_ROI_THICKNESS are
+# likewise imported from there, not redefined here.
 
 # Git Issue #19 (reopened for performance): for type-00 (OUT->OUT) gaps
 # above MIN_GAP_DURATION_FOR_BINARY_SEARCH, sample left-to-right at this
@@ -122,88 +124,6 @@ def extract_frame_to_path(video_map, global_frame, out_path):
         if _read_frame_from_video(video_entry, resolved_frame, out_path):
             return resolved_frame
     return None
-
-def _draw_dashed_edge(draw, start, end, color, thickness, dash_length=8, gap_length=5):
-    """Draw one dashed straight edge (horizontal or vertical) between two points."""
-    x1, y1 = start
-    x2, y2 = end
-    if x1 == x2:  # vertical edge
-        y, y_end = min(y1, y2), max(y1, y2)
-        while y < y_end:
-            seg_end = min(y + dash_length, y_end)
-            draw.line([(x1, y), (x1, seg_end)], fill=color, width=thickness)
-            y = seg_end + gap_length
-    else:  # horizontal edge
-        x, x_end = min(x1, x2), max(x1, x2)
-        while x < x_end:
-            seg_end = min(x + dash_length, x_end)
-            draw.line([(x, y1), (seg_end, y1)], fill=color, width=thickness)
-            x = seg_end + gap_length
-
-def draw_roi_overlay(img, roi, color=DEFAULT_ROI_COLOR, thickness=DEFAULT_ROI_THICKNESS, dashed=False):
-    """
-    Git Issue #22 (+ follow-up): draw a Nest or Buffer ROI as an outline
-    rectangle on a PIL Image, in place, and return it. Nest ROI is drawn
-    solid; Buffer ROI is drawn dashed, so the two stay visually
-    distinguishable while sharing the same colour/thickness.
-
-    roi uses the same {"xmin","xmax","ymin","ymax"} dict shape as
-    1.lmt_gap_fill.py's NEST/NEST_BUFFER, persisted into that script's
-    output SQLite (ROI_METADATA table) and read back via
-    _load_roi_metadata_from_db() -- this script no longer accepts ROI
-    values on its own command line. MASS_X/MASS_Y and video pixel
-    coordinates share the same coordinate space in this pipeline, so the
-    bounds are drawn directly with no rescaling.
-
-    Outline-only, never filled, so the overlay marks the boundary without
-    covering the animal or nest contents underneath it (non-obscuring).
-    Call this before any thumbnail/resize of `img` so the rectangle is
-    drawn in the same pixel space as roi, then let the resize scale the
-    whole image (overlay included) down together.
-    """
-    draw = ImageDraw.Draw(img)
-    x0, y0, x1, y1 = roi["xmin"], roi["ymin"], roi["xmax"], roi["ymax"]
-    if not dashed:
-        draw.rectangle([x0, y0, x1, y1], outline=color, width=thickness)
-    else:
-        _draw_dashed_edge(draw, (x0, y0), (x1, y0), color, thickness)  # top
-        _draw_dashed_edge(draw, (x0, y1), (x1, y1), color, thickness)  # bottom
-        _draw_dashed_edge(draw, (x0, y0), (x0, y1), color, thickness)  # left
-        _draw_dashed_edge(draw, (x1, y0), (x1, y1), color, thickness)  # right
-    return img
-
-def _load_roi_metadata_from_db(conn):
-    """
-    Git Issue #22 follow-up: read the Nest/Buffer ROI 1.lmt_gap_fill.py used,
-    from the ROI_METADATA table it writes (one row, columns NEST_XMIN/
-    NEST_XMAX/NEST_YMIN/NEST_YMAX/BUFFER_XMIN/BUFFER_XMAX/BUFFER_YMIN/
-    BUFFER_YMAX) into its output SQLite -- the same file passed as -i/--input
-    here. This is now the ONLY source of ROI values for this script; there
-    is no CLI way to supply or override them.
-
-    Returns (nest_roi, buffer_roi), each either a {"xmin","xmax","ymin",
-    "ymax"} dict or None if the table doesn't exist (e.g. an input file
-    produced by an older 1.lmt_gap_fill.py that predates this table).
-    """
-    cursor = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='ROI_METADATA'")
-    if cursor.fetchone() is None:
-        return None, None
-
-    row = pd.read_sql_query("SELECT * FROM ROI_METADATA LIMIT 1", conn)
-    if len(row) == 0:
-        return None, None
-    row = row.iloc[0]
-
-    nest_roi = {
-        "xmin": row["NEST_XMIN"], "xmax": row["NEST_XMAX"],
-        "ymin": row["NEST_YMIN"], "ymax": row["NEST_YMAX"],
-    }
-    buffer_roi = {
-        "xmin": row["BUFFER_XMIN"], "xmax": row["BUFFER_XMAX"],
-        "ymin": row["BUFFER_YMIN"], "ymax": row["BUFFER_YMAX"],
-    }
-    return nest_roi, buffer_roi
 
 # Gap boundary classification
 def classify_gap_type(gap_start_frame, gap_end_frame, in_nest_lookup):
@@ -876,7 +796,7 @@ class BinarySearchGUI:
         # read from this same input file's ROI_METADATA table (written by
         # the current 1.lmt_gap_fill.py) -- there is no CLI override for
         # either, so this is the only place either can ever be set.
-        self.nest_roi, self.buffer_roi = _load_roi_metadata_from_db(conn)
+        self.nest_roi, self.buffer_roi = load_roi_metadata_from_db(conn)
         if self.nest_roi is not None:
             self.nest_roi_source = "auto-loaded from 1.lmt_gap_fill.py output"
         if self.buffer_roi is not None:
@@ -1459,6 +1379,17 @@ class BinarySearchGUI:
         out_sqlite = os.path.join(self.output_folder, f"lmt_binary_search_{animal_label}_{timestamp}.sqlite")
         conn = sqlite3.connect(out_sqlite)
         df_out.to_sql("GAP_FILL_ANALYSIS", conn, if_exists="replace", index=False)
+
+        # Git Issue #22 (4.lmt_qc_validator.py follow-up): propagate the
+        # Nest/Buffer ROI this run read from its own input's ROI_METADATA
+        # forward into this script's own output. Without this,
+        # 3.lmt_qc_sampler.py's output (and hence 4.lmt_qc_validator.py's
+        # input) would never have a ROI to read, since ROI_METADATA is
+        # otherwise only ever written by 1.lmt_gap_fill.py. No-ops if both
+        # ROIs are None (e.g. this run's own input predated ROI_METADATA).
+        roi_animal_id = int(self.df_all["ANIMALID"].iloc[0]) if "ANIMALID" in self.df_all.columns and len(self.df_all) else None
+        write_roi_metadata(conn, roi_animal_id, self.nest_roi, self.buffer_roi)
+
         conn.close()
 
         # WRITE REPORT
