@@ -594,7 +594,7 @@ def parse_args(argv=None):
              "(3.lmt_qc_sampler.py output).",
     )
     parser.add_argument(
-        "-o", "--screenshot-folder", required=True,
+        "-s", "--screenshot-folder", required=True,
         help="Screenshot folder produced by 3.lmt_qc_sampler.py for this sample.",
     )
     parser.add_argument(
