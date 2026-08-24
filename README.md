@@ -894,6 +894,19 @@ inconsistencies.
   separate checkpoint-sampling mechanism that doesn't assume monotonicity
   (see step 4); at or below the duration threshold, they're still
   filtered out before any review begins.
+- **The Buffer ROI has no role inside binary search. Interior frames
+  are judged by the reviewer, not by either ROI (Issue [#29](https://github.com/CoBrALab/LMT-QC-Pipeline/issues/29)).** The
+  Buffer ROI exists solely to give `1.lmt_gap_fill.py` tolerance when
+  deciding whether a gap can be safely auto-resolved; it plays no part
+  once a gap is ineligible for that and reaches binary search. IN
+  NEST/OUT OF NEST answers for a segment's midpoint are a human visual
+  judgment, not a coordinate-based ROI test — no `MASS_X`/`MASS_Y`
+  check runs against either ROI during the recursive search. Nest/Buffer
+  ROI overlays (`--show-nest-roi`/`--show-buffer-roi`) can optionally be
+  drawn on the review frames as a visual aid, but they default to off
+  and their absence doesn't change what's being asked: the reviewer is
+  answering "is the animal in the nest right now," using their own
+  judgment.
 - **Nearest-frame video resolution, not backward-only or exact-only.**
   When a requested global frame doesn't map exactly onto any loaded video's
   coverage, the script resolves to the nearer of the closest preceding or
