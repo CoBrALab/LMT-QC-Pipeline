@@ -214,7 +214,7 @@ uv run python 3.lmt_qc_sampler.py -i "/path/to/input/lmt_binary_search_A<animal_
 | Argument | Type | Controls |
 |---|---|---|
 | `-i`, `--input` | path | The `lmt_qc_sampler_<qc_mode>_A<animal_id>_<timestamp>.sqlite` file from `3.lmt_qc_sampler.py`. |
-| `-o`, `--screenshot-folder` | directory | The `Screenshots/` folder produced alongside that same file. |
+| `-s`, `--screenshot-folder` | directory | The `Screenshots/` folder produced alongside that same file. |
 
 **Optional:**
 
