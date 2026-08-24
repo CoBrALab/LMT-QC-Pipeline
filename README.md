@@ -375,7 +375,29 @@ inspected by this script.
   `MASS_Y`, the values this pipeline is actually built on, can still be
   accurate on such a row. Whether two rows for the same frame and animal
   *agree* is a much safer signal than what either row's coordinates
-  happen to be.
+  happen to be. This was validated against 120 rows sampled across 4
+  SQLite databases where `FRONT_*`/`BACK_*` were all `-1` but `MASS_X`/
+  `MASS_Y` were valid: 100% of the sampled `MASS_X`/`MASS_Y` positions
+  matched the animal's actual position in Live Data Player/video. The current
+  interpretation is that RFID-associated tracking can supply `MASS_X`/
+  `MASS_Y` even when FRONT/BACK coordinates aren't available, though this
+  is an observation about the sampled data, not something the code itself
+  verifies row-by-row. See Git Issue [#26](https://github.com/CoBrALab/LMT-QC-Pipeline/issues/26) for the original analysis.
+- **Rows missing `FRAMENUMBER` and/or `ANIMALID` (including anonymous
+  detections (`ANIMALID IS NULL`)) are left untouched, not deduplicated.**
+  `ANIMALID IS NULL` means LMT detected a mouse but could not identify it;
+  this is different from "no detection" (see Git Issue [#28](https://github.com/CoBrALab/LMT-QC-Pipeline/issues/28)). Grouping
+  these rows into the dedup logic anyway (e.g. via `groupby(...,
+  dropna=False)`) would treat "missing identity" as itself a shared
+  identity value, silently lumping together unrelated anonymous
+  detections and risking their mass-deletion as a false "conflicting
+  group." This script only ever deletes rows it can positively identify
+  as exact duplicates or as conflicting with another row for the *same*
+  identity, and a row with no identity at all can be neither, so these
+  rows pass through unchanged for whatever downstream stage might use
+  them (Git Issues [#28](https://github.com/CoBrALab/LMT-QC-Pipeline/issues/28) and [#30](https://github.com/CoBrALab/LMT-QC-Pipeline/issues/30) notes anonymous detections may be useful for future
+  QC/human review/visualization work, even though the current pipeline
+  doesn't yet act on them beyond preserving them here).
 - **No arbitrary tie-breaking on conflicting data.** When two rows disagree
   about the same (`FRAMENUMBER`, `ANIMALID`), there's no information in
   this table that says which one is correct, so silently keeping one
@@ -519,6 +541,22 @@ override for the Nest ROI specifically).
   trigger in the normal pipeline order. It exists to fail loudly, rather
   than corrupt results silently, if this script is ever run against data
   that skipped that step.
+- **Anonymous detections (`ANIMALID IS NULL`) never enter a single
+  animal's timeline (Issue [#28](https://github.com/CoBrALab/LMT-QC-Pipeline/issues/28)).** The source query
+  (`WHERE ANIMALID = ?`) binds a specific integer Animal ID; under
+  standard SQL NULL semantics this never matches a row where `ANIMALID`
+  is `NULL`, so anonymous detections are excluded from the result set
+  before any gap-fill logic runs. `ANIMALID IS NULL` means "a mouse was
+  detected but LMT could not identify it," not "no detection," treating
+  it as identified-and-belonging-to-this-animal would risk attributing an
+  anonymous detection to the wrong animal (a false positive) with no way
+  to verify the assignment. For a single animal's timeline, an anonymous
+  detection is therefore currently indistinguishable from "no detection
+  at all": both leave that frame to be resolved as a gap by the logic
+  below. This is a deliberate scope decision. Git
+  Issues [#28](https://github.com/CoBrALab/LMT-QC-Pipeline/issues/28) and [#30](https://github.com/CoBrALab/LMT-QC-Pipeline/issues/30) notes anonymous detections may still be valuable for future
+  QC, human review, or visualization work that isn't tied to a specific
+  animal's timeline, just not for this script's purpose.
 - **Two independent, asymmetric ROI tests, not one.** The buffer ROI is
   intentionally looser than the nest ROI. Requiring the *exit* point to only
   be within the wider buffer (rather than the strict nest box) tolerates
