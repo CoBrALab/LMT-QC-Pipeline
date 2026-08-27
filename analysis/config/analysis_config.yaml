@@ -1,0 +1,52 @@
+# analysis/config/analysis_config.yaml
+#
+# Experiment-specific configuration for the analysis layer
+# (analysis/scripts/run_analysis.py).
+#
+# EVERY VALUE BELOW IS A PLACEHOLDER. Replace animal IDs, file paths, and
+# thresholds with your actual experiment's values before running the
+# script -- nothing here is inferred from the data itself.
+#
+# All file paths are resolved relative to THIS file's own directory, not
+# to wherever you run the script from.
+
+# Where run_analysis.py writes its output CSVs.
+output_dir: ../outputs
+
+# Bin width for the occupancy timeline (Metric 4). 60s is a reasonable
+# starting point for a multi-hour session; sanity-check against each
+# animal's own bout-duration summary before trusting a figure built on
+# this -- a bin much longer than typical bout duration washes out the
+# signal.
+occupancy_timeline_bin_seconds: 60
+
+# Maximum center-to-center distance (SAME SPATIAL UNIT AS YOUR LMT
+# EXPORT'S MASS_X/MASS_Y -- confirm this before setting the value; it is
+# NOT necessarily centimeters) counted as "in contact" for the proximity
+# metric (Metric 7). Leave as null to skip proximity/locomotion metrics
+# entirely (they also require processed_detection_sqlite below).
+proximity_contact_threshold: null
+
+# One entry per tracked adult. Keys must be the exact ANIMALID values
+# used in your LMT SQLite files. "role" must be "dam" or "babysitter".
+# "gap_fill_sqlite" is that animal's OWN 2.lmt_binary_search.py output
+# file (lmt_binary_search_A<id>_<timestamp>.sqlite) -- NOT the shared
+# processed_detection_sqlite below.
+animals:
+  101:
+    role: dam
+    gap_fill_sqlite: /path/to/lmt_binary_search_A101_2026-01-01_00-00-00.sqlite
+  102:
+    role: dam
+    gap_fill_sqlite: /path/to/lmt_binary_search_A102_2026-01-01_00-00-00.sqlite
+  103:
+    role: babysitter
+    gap_fill_sqlite: /path/to/lmt_binary_search_A103_2026-01-01_00-00-00.sqlite
+  104:
+    role: babysitter
+    gap_fill_sqlite: /path/to/lmt_binary_search_A104_2026-01-01_00-00-00.sqlite
+
+# The SHARED {name}_processed.sqlite file (0.Preprocessing.py's output)
+# covering ALL animals in this session, used only for the spatial metrics
+# (proximity, locomotion). Omit or leave null to skip those metrics.
+processed_detection_sqlite: null
