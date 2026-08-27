@@ -8,6 +8,7 @@ dependencies = [
     "opencv-python>=5.0.0.93",
     "pandas>=3.0.5",
     "pillow>=12.3.0",
+    "pyyaml>=6.0.3",
 ]
 
 [dependency-groups]
