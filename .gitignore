@@ -28,3 +28,9 @@ LMT_Summary_*.txt
 lmt_qc_validator_*.txt
 _binsearch_tmp/
 Screenshots/
+
+# analysis/ layer: generated CSV outputs, not source. Users regenerate
+# these by running analysis/scripts/run_analysis.py against their
+# own config/data.
+analysis/outputs/*
+!analysis/outputs/.gitkeep
