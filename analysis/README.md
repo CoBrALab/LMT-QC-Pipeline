@@ -141,7 +141,7 @@ analysis/
   ```bash
   uv run python analysis/scripts/run_analysis.py \
       --config analysis/config/analysis_config.yaml \
-      --output-dir /path/to/output
+      --output-dir "/path/to/output"
   # writes into /path/to/output/2026-08-27_19-06-04/
   ```
 
