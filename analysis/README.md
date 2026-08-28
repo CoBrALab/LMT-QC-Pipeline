@@ -65,22 +65,6 @@ analysis/
 └── README.md
 ```
 
-## Installing dependencies
-
-This adds one new dependency to the repo's existing `uv` project:
-**PyYAML** (for `analysis_config.yaml`). Everything else (`numpy`,
-`pandas`) is already a pipeline dependency.
-
-From the repo root:
-
-```bash
-uv add pyyaml
-```
-
-This updates `pyproject.toml` and `uv.lock`; commit both, per the
-existing repo's own dependency-update convention (see the main
-`README.md`'s "Adding or updating a dependency" section).
-
 ## How to run
 
 1. In `analysis/config/analysis_config.yaml`, fill in your actual
