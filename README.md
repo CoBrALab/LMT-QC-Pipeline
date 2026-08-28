@@ -24,13 +24,13 @@ Find more information about Live Mouse Tracker (LMT) on its [website](https://mi
 - [Execution order](#execution-order)
 - [Setup & Running](#setup--running)
 - [CLI Reference](#cli-reference)
-- [Script: `0.Preprocessing.py`](#script-0preprocessingpy)
-- [Script: `1.lmt_gap_fill.py`](#script-1lmt_gap_fillpy)
-- [Script: `2.lmt_binary_search.py`](#script-2lmt_binary_searchpy)
-- [Script: `3.lmt_qc_sampler.py`](#script-3lmt_qc_samplerpy)
-- [Script: `4.lmt_qc_validator.py`](#script-4lmt_qc_validatorpy)
-- [`lmt_common.py`](#lmt_commonpy)
-- [Testing (`tests/`)](#testing-tests)
+- [Script: 0.Preprocessing.py](#script-0preprocessingpy)
+- [Script: 1.lmt_gap_fill.py](#script-1lmt_gap_fillpy)
+- [Script: 2.lmt_binary_search.py](#script-2lmt_binary_searchpy)
+- [Script: 3.lmt_qc_sampler.py](#script-3lmt_qc_samplerpy)
+- [Script: 4.lmt_qc_validator.py](#script-4lmt_qc_validatorpy)
+- [lmt_common.py](#lmt_commonpy)
+- [Testing (tests/)](#testing-tests)
 
 
 ## Execution order
