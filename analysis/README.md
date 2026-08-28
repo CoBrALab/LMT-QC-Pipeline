@@ -3,8 +3,7 @@
 This directory contains nest-occupancy and social metrics built on top
 of the existing LMT QC pipeline's outputs. It does not
 modify `0.Preprocessing.py`, `1.lmt_gap_fill.py`, `2.lmt_binary_search.py`,
-`3.lmt_qc_sampler.py`, `4.lmt_qc_validator.py`, or `lmt_common.py` -- it
-only reads the SQLite files those scripts produce.
+`3.lmt_qc_sampler.py`, `4.lmt_qc_validator.py`, or `lmt_common.py`.
 
 ## Contents
 
@@ -15,7 +14,6 @@ only reads the SQLite files those scripts produce.
 - [Output directory behavior](#output-directory-behavior)
 - [Output tables: full column reference](#output-tables-full-column-reference)
 - [How to test](#how-to-test)
-- [Known environment note](#known-environment-note)
 
 ## What it computes
 
@@ -33,7 +31,7 @@ only reads the SQLite files those scripts produce.
 
 Every function has a full docstring (what it does / why it exists /
 inputs / outputs / logic / assumptions / failure modes / validation /
-integration) -- read those before changing behavior. This README
+integration). This README
 summarizes the same information at the output-table level; the
 docstrings are the authoritative source if the two ever disagree.
 
@@ -85,10 +83,9 @@ existing repo's own dependency-update convention (see the main
 
 ## How to run
 
-1. Copy `analysis/config/analysis_config.yaml` and fill in your actual
+1. In `analysis/config/analysis_config.yaml`, fill in your actual
    animal IDs, roles, and each animal's
-   `lmt_binary_search_A<id>_<timestamp>.sqlite` path (script 2's output
-   -- not script 1's, since fill-source QC needs `FILL_SOURCE`). Set
+   `lmt_binary_search_A<id>_<timestamp>.sqlite` path (script 2's output). Set
    `processed_detection_sqlite` and `proximity_contact_threshold` too if
    you want the spatial metrics (Metrics 7-8); leave them as `null` to
    skip those.
@@ -131,8 +128,7 @@ $ uv run python analysis/scripts/run_analysis.py \
 
 If it fails instead, the error is a clear `ValueError` naming the
 specific config field or SQLite schema problem (see `src/config.py` and
-`src/io.py`'s own "Failure modes" docstring sections) -- not a raw
-traceback from deep inside a metric function.
+`src/io.py`'s own "Failure modes" docstring sections).
 
 ## Output directory behavior
 
@@ -167,15 +163,15 @@ analysis/
 
 - **Folder naming:** `YYYY-MM-DD_HH-MM-SS` (second precision), e.g.
   `2026-08-27_19-06-04`. If two runs start within the same second
-  against the same parent directory (rare, but possible -- e.g. two
+  against the same parent directory (rare, but possible; e.g. two
   runs launched back-to-back in a script), a numeric suffix is appended
   (`_2`, `_3`, ...) so no run ever overwrites another's output. This is
   implemented once, in `src/run_utils.py::create_run_output_dir`, and
-  used by every CLI script in this directory -- see that function's own
-  docstring for the exact collision-handling logic.
+  used by every CLI script in this directory (see that function's own
+  docstring for the exact collision-handling logic).
 - The parent directory (`analysis/outputs/` or your `--output-dir`
   value) is created automatically if it doesn't already exist, but is
-  **never** written into directly -- only the timestamped subdirectory
+  **never** written into directly, only the timestamped subdirectory
   inside it receives output files.
 
 ## Output tables: full column reference
@@ -183,7 +179,7 @@ analysis/
 Every table below is written by `run_analysis.py`'s `main()` into
 that run's timestamped output directory. "How calculated" points to the
 exact source function; read that function's own docstring for the full
-algorithm, edge cases, and validation notes -- this section gives the
+algorithm, edge cases, and validation notes, this section gives the
 column-level summary needed to interpret a CSV without re-reading the
 source.
 
@@ -207,26 +203,26 @@ in-nest and once for out-of-nest bouts), and `fill_source_composition()`.
 | `role` | `dam` or `babysitter` | From `analysis_config.yaml` | Assigned by the user, not inferred from data |
 | `seconds_in_nest` | Total confirmed in-nest time | Sum of `DURATION_SEC` over bouts with `STATE == 1` | Excludes unresolved (`-1`) time entirely |
 | `seconds_out_of_nest` | Total confirmed out-of-nest time | Sum of `DURATION_SEC` over bouts with `STATE == 0` | |
-| `seconds_unresolved` | Total time LMT could not resolve as in/out of nest | Sum of `DURATION_SEC` over bouts with `STATE == -1` | Report this alongside any in-nest number -- see `fraction_unresolved` below |
+| `seconds_unresolved` | Total time LMT could not resolve as in/out of nest | Sum of `DURATION_SEC` over bouts with `STATE == -1` | Report this alongside any in-nest number (see `fraction_unresolved` below) |
 | `total_seconds` | `seconds_in_nest + seconds_out_of_nest + seconds_unresolved` | Sum of the three above | |
-| `fraction_in_nest` | Fraction of **resolved** time spent in nest | `seconds_in_nest / (seconds_in_nest + seconds_out_of_nest)` | Deliberately computed over resolved time only, NOT `total_seconds` -- dividing by total would let a high unresolved fraction silently understate the estimate rather than flagging it as less certain |
-| `fraction_unresolved` | Fraction of the whole session that's unresolved | `seconds_unresolved / total_seconds` | Always check this before trusting `fraction_in_nest` -- a high value here means the in-nest estimate rests on less directly-observed data |
-| `n_entries` | Count of confirmed nest entries (`0->1` transitions) | Count of bouts with `STATE == 1` and `PREV_STATE == 0` in the true (unfiltered) bout sequence | A transition immediately following an unresolved bout is excluded -- it was never actually observed, so this count is a **lower bound** when `fraction_unresolved` is non-trivial |
+| `fraction_in_nest` | Fraction of **resolved** time spent in nest | `seconds_in_nest / (seconds_in_nest + seconds_out_of_nest)` | Deliberately computed over resolved time only, NOT `total_seconds`, dividing by total would let a high unresolved fraction silently understate the estimate rather than flagging it as less certain |
+| `fraction_unresolved` | Fraction of the whole session that's unresolved | `seconds_unresolved / total_seconds` | Always check this before trusting `fraction_in_nest`, a high value here means the in-nest estimate rests on less directly-observed data |
+| `n_entries` | Count of confirmed nest entries (`0->1` transitions) | Count of bouts with `STATE == 1` and `PREV_STATE == 0` in the true (unfiltered) bout sequence | A transition immediately following an unresolved bout is excluded: it was never actually observed, so this count is a **lower bound** when `fraction_unresolved` is non-trivial |
 | `n_exits` | Count of confirmed nest exits (`1->0` transitions) | Same logic, reversed | Same lower-bound caveat |
 | `n_bouts_in_nest` | Count of resolved-transition in-nest bouts | Count of bouts with `STATE == 1`, any `PREV_STATE` | |
 | `n_bouts_out_of_nest` | Count of resolved-transition out-of-nest bouts | Count of bouts with `STATE == 0` | |
-| `in_nest_bout_median_sec` | Median duration of in-nest bouts | Median of `DURATION_SEC` for `STATE == 1` bouts with `PREV_STATE == 0` | Median, not mean, is the headline statistic -- bout durations are typically right-skewed |
+| `in_nest_bout_median_sec` | Median duration of in-nest bouts | Median of `DURATION_SEC` for `STATE == 1` bouts with `PREV_STATE == 0` | Median, not mean, is the headline statistic. Bout durations are typically right-skewed |
 | `in_nest_bout_mean_sec` | Mean duration of in-nest bouts | Mean of the same set | Report alongside the median, not instead of it |
 | `out_of_nest_bout_median_sec` | Median duration of out-of-nest bouts | Same logic for `STATE == 0` | |
 | `out_of_nest_bout_mean_sec` | Mean duration of out-of-nest bouts | Same logic | |
-| `fill_source_frac_DETECTED` | Fraction of frames directly detected by LMT (no gap-filling) | From `2.lmt_binary_search.py`'s own `FILL_SOURCE` column | Only present if the input file has a `FILL_SOURCE` column (script 2's output, not script 1's) |
+| `fill_source_frac_DETECTED` | Fraction of frames directly detected by LMT (no gap-filling) | From `2.lmt_binary_search.py`'s own `FILL_SOURCE` column | Only present if the input file has a `FILL_SOURCE` column (script 2's output) |
 | `fill_source_frac_LOGIC` | Fraction resolved by gap-fill boundary logic | Same source | |
 | `fill_source_frac_BINARY_SEARCH` | Fraction resolved via human-reviewed binary search | Same source | |
 | `fill_source_frac_UNKNOWN` | Fraction that remains unresolved even after binary search | Same source | Corresponds to `STATE == -1` bouts above |
 
 Note: the `fill_source_frac_*` columns are generated dynamically from
 whichever `FILL_SOURCE` categories are actually present in that
-animal's file -- an animal with zero `UNKNOWN` frames simply won't have
+animal's file. An animal with zero `UNKNOWN` frames simply won't have
 a `fill_source_frac_UNKNOWN` column (its true value would be 0, but the
 column is only added when the category appears at all).
 
@@ -248,22 +244,22 @@ animal's full per-frame timeline into fixed windows
 | `N_FRAMES` | Frames actually present in this bin | Row count within the bin |
 
 `FRAC_IN_NEST + FRAC_OUT_OF_NEST + FRAC_UNRESOLVED == 1.0` for every row
-(within floating-point tolerance) -- this is asserted in the source
+(within floating-point tolerance), this is asserted in the source
 function itself. **The last bin is typically partial** (session length
-is rarely an exact multiple of `bin_seconds`) -- check `N_FRAMES` before
+is rarely an exact multiple of `bin_seconds`), check `N_FRAMES` before
 treating every bin as equally reliable.
 
 ---
 
 ### `entry_exit_events.csv`
 
-All animals' entries and exits, concatenated -- the raw data for a
+All animals' entries and exits, concatenated. The raw data for a
 raster/timeline plot. Generated by `entry_exit_events()` per animal,
 concatenated across animals in `run_per_animal_metrics()`.
 
 | Column | Meaning | How calculated |
 |---|---|---|
-| `ANIMAL` | Label for this event's animal | `f"{role}_{animal_id}"`, e.g. `dam_101` |
+| `ANIMAL` | Label for this event's animal | `f"{role}_{animal_id}"` |
 | `EVENT_TYPE` | `ENTRY` or `EXIT` | A bout's `STATE`/`PREV_STATE` pair (`1`/`0` = entry, `0`/`1` = exit) |
 | `FRAMENUMBER` | The frame the transition occurred on | The new bout's `START_FRAME` |
 | `TIME_SEC` | Same instant, in seconds | `FRAMENUMBER / DB_FPS` |
@@ -290,7 +286,7 @@ configured). Generated by `run_co_occupancy_metrics()`, calling
 | `fraction_of_resolved_time` | `seconds_all_together / total_resolved_seconds` | |
 
 A frame only counts toward `seconds_all_together` if **every** animal in
-the group is resolved at that frame -- if any one of them is `-1`, that
+the group is resolved at that frame. If any one of them is `-1`, that
 frame is excluded from both the numerator and the denominator entirely
 (not counted as "not together").
 
@@ -298,8 +294,8 @@ frame is excluded from both the numerator and the denominator entirely
 
 ### `group_occupancy_profile.csv`
 
-**Extended in this update** to show exactly which animals are in the
-nest, per frame -- not just a count. One row per frame in the merged
+Shows exactly which animals are in the
+nest, per frame. One row per frame in the merged
 occupancy matrix (the frame range common to every configured adult; see
 `build_occupancy_matrix()`). Generated by `group_occupancy_table()`.
 
@@ -307,26 +303,10 @@ occupancy matrix (the frame range common to every configured adult; see
 |---|---|---|
 | `FRAMENUMBER` | The frame this row describes | The merged occupancy matrix's own index |
 | `n_in_nest` | Count of animals **confirmed** in the nest this frame | Count of columns (below) equal to `1` |
-| `<animal_id>` (one column per configured adult, e.g. `101`, `102`, `103`, `104`) | That animal's nest status this frame | Taken directly from that animal's `IN_NEST` value: `1` = confirmed in nest, `0` = confirmed not in nest, `-1` = unresolved at this frame |
+| `<animal_id>` (one column per mice) | That animal's nest status this frame | Taken directly from that animal's `IN_NEST` value: `1` = confirmed in nest, `0` = confirmed not in nest, `-1` = unresolved at this frame |
 
-**Example:**
-
-```text
-FRAMENUMBER,n_in_nest,101,102,103,104
-0,2,1,1,0,0
-1,2,1,1,0,0
-...
-40,1,1,0,0,-1
-```
-
-Row 40 reads: 1 animal *confirmed* in the nest (animal `101`); animal
-`102` confirmed out; animal `103` confirmed out; animal `104`'s status
-this frame is **unresolved** (not "confirmed out") -- distinguishable
-from `102`/`103` specifically because the value is `-1`, not `0`.
-
-**Important design note (a deliberate, documented deviation worth your
-explicit sign-off):** the per-animal columns are **not** strictly binary
-`{0, 1}` -- they preserve `-1` for an unresolved frame, matching the
+**Important design note:** the per-animal columns are **not** strictly binary
+`{0, 1}`, they preserve `-1` for an unresolved frame, matching the
 `IN_NEST` convention already used everywhere else in this pipeline
 (`co_occupancy_seconds`, `total_time_in_nest`, etc.). This was a
 deliberate choice, not an oversight: silently converting an unresolved
@@ -335,22 +315,6 @@ absent," which every other part of this codebase goes out of its way to
 avoid (see `fraction_unresolved` above). `n_in_nest` itself still counts
 only confirmed-present (`== 1`) animals, so it's always a real, honest
 number even on a row with some `-1` columns.
-
-If you need **strictly** binary `{0, 1}` values (e.g. for a plotting
-library that can't handle a third value), that's a one-line
-post-processing step on this CSV, done explicitly wherever you need it:
-
-```python
-import pandas as pd
-df = pd.read_csv("group_occupancy_profile.csv")
-animal_cols = ["101", "102", "103", "104"]  # your configured animal IDs
-df[animal_cols] = df[animal_cols].clip(lower=0)  # forces -1 -> 0
-```
-
-Doing this in your own analysis script (rather than baking it into the
-pipeline) keeps the "unresolved was forced to absent" decision visible
-and deliberate in your own code, not hidden inside a shared library
-function.
 
 ---
 
@@ -365,10 +329,10 @@ animal pair. Generated by `run_spatial_metrics()`, calling
 |---|---|---|---|
 | `animal_a`, `animal_b` | The pair's two animal IDs | From `analysis_config.yaml` | |
 | `n_valid_frames` | Frames where both animals had a detected position | Count of non-NaN frames in the distance series | A missing detection for either animal makes that frame NaN, not estimated |
-| `mean_distance` | Mean centroid-to-centroid distance across valid frames | Mean of `sqrt((xa-xb)^2 + (ya-yb)^2)` | Same spatial unit as your LMT export's `MASS_X`/`MASS_Y` -- confirm what that unit actually is before interpreting |
+| `mean_distance` | Mean centroid-to-centroid distance across valid frames | Mean of `sqrt((xa-xb)^2 + (ya-yb)^2)` | Same spatial unit as your LMT export's `MASS_X`/`MASS_Y` |
 | `median_distance` | Median of the same | | |
 | `seconds_in_contact` | Time the pair spent within `proximity_contact_threshold` | Count of valid frames with distance <= threshold, / `DB_FPS` | |
-| `fraction_valid_time_in_contact` | Fraction of **valid** (not total) time in contact | `seconds_in_contact / (n_valid_frames / DB_FPS)` | If detection dropout is more likely exactly when animals are close together (a plausible tracking-error mechanism), this fraction is a biased, not unbiased, estimate of true contact time -- see `src/spatial.py`'s own docstring |
+| `fraction_valid_time_in_contact` | Fraction of **valid** (not total) time in contact | `seconds_in_contact / (n_valid_frames / DB_FPS)` | If detection dropout is more likely exactly when animals are close together (a plausible tracking-error mechanism), this fraction is a biased, not unbiased, estimate of true contact time (see `src/spatial.py`'s own docstring) |
 
 ---
 
@@ -382,8 +346,8 @@ Generated by `locomotor_distance()`.
 | `animal_id` | The animal's ID | | |
 | `total_distance` | Total path length traveled | Sum of consecutive-frame Euclidean displacement, ONLY across truly-adjacent frames (see `n_excluded_gap_segments`) | Same spatial-unit caveat as proximity above |
 | `n_valid_segments` | Count of adjacent-frame pairs actually summed | | |
-| `n_excluded_gap_segments` | Count of frame-pairs excluded because they weren't truly adjacent (a detection gap in between) | A displacement across a multi-frame gap is NOT summed -- it would wildly underestimate true path length by assuming a straight line across however far the animal actually moved during the gap | |
-| `fraction_path_observed` | `n_valid_segments / (n_valid_segments + n_excluded_gap_segments)` | | Typically **substantially lower** than the frame-resolved fraction behind the occupancy metrics -- there is no gap-filling mechanism for path length the way there is for nest state. A low value means `total_distance` is a real underestimate, not a small one -- always report this alongside `total_distance`, never in isolation |
+| `n_excluded_gap_segments` | Count of frame-pairs excluded because they weren't truly adjacent (a detection gap in between) | A displacement across a multi-frame gap is NOT summed, it would wildly underestimate true path length by assuming a straight line across however far the animal actually moved during the gap | |
+| `fraction_path_observed` | `n_valid_segments / (n_valid_segments + n_excluded_gap_segments)` | | Typically **substantially lower** than the frame-resolved fraction behind the occupancy metrics. There is no gap-filling mechanism for path length the way there is for nest state. A low value means `total_distance` is a real underestimate, always report this alongside `total_distance`, never in isolation |
 
 ## How to test
 
@@ -392,14 +356,6 @@ From the repo root:
 ```bash
 uv run pytest analysis/tests/ -v
 ```
-
-This suite is fully synthetic and headless -- no real LMT SQLite file or
-video is required; `conftest.py` builds small SQLite fixtures matching
-the pipeline's real schemas. **I ran this suite in the course of writing
-it** (63 tests, all passing) against the repository as delivered;
-running it again in your own environment is still the right way to
-confirm it still passes there before trusting it, since `uv.lock`/
-dependency versions may differ.
 
 **What the tests check:**
 - `test_io.py` -- SQLite loading and validation: malformed/wrong-schema
