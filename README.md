@@ -128,6 +128,7 @@ geometry would corrupt the in-nest time estimate without any indication
 something was wrong, so the script refuses to run until every one of
 these is supplied explicitly.
 To note: For each tracking periods acquired with LMT, the animal ID can change even if the animals are the same inthe cages. Make sure that the id is confirmed with ANIMAL in the sqlite.
+  TO do this: 1. open sqlite `sqlite3 your_sqlite.sqlite` , then 2. `SELECT * FROM ANIMAL LIMIT 10;`.
 
 | Argument | Type | Controls |
 |---|---|---|
