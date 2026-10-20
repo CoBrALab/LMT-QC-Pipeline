@@ -25,7 +25,7 @@ occupancy_timeline_bin_seconds: 60
 # NOT necessarily centimeters) counted as "in contact" for the proximity
 # metric (Metric 7). Leave as null to skip proximity/locomotion metrics
 # entirely (they also require processed_detection_sqlite below).
-proximity_contact_threshold: null
+proximity_contact_threshold: 20
 
 # One entry per tracked adult. Keys must be the exact ANIMALID values
 # used in your LMT SQLite files. "role" must be "dam" or "babysitter".
@@ -33,20 +33,21 @@ proximity_contact_threshold: null
 # file (lmt_binary_search_A<id>_<timestamp>.sqlite) -- NOT the shared
 # processed_detection_sqlite below.
 animals:
-  101:
-    role: dam
-    gap_fill_sqlite: /path/to/lmt_binary_search_A101_2026-01-01_00-00-00.sqlite
-  102:
-    role: dam
-    gap_fill_sqlite: /path/to/lmt_binary_search_A102_2026-01-01_00-00-00.sqlite
-  103:
+  1:
     role: babysitter
-    gap_fill_sqlite: /path/to/lmt_binary_search_A103_2026-01-01_00-00-00.sqlite
-  104:
+    gap_fill_sqlite: /data/chamal/projects/audreyanne/dc_pilot/raw_videos/analysis_dc_20260818/A1/lmt_binary_search_A1_2026-08-25_10-27-03.sqlite
+  2:
+    role: dam
+    gap_fill_sqlite: /data/chamal/projects/audreyanne/dc_pilot/raw_videos/analysis_dc_20260818/A2/lmt_binary_search_A2_2026-08-25_10-48-33.sqlite
+
+  3:
     role: babysitter
-    gap_fill_sqlite: /path/to/lmt_binary_search_A104_2026-01-01_00-00-00.sqlite
+    gap_fill_sqlite: /data/chamal/projects/audreyanne/dc_pilot/raw_videos/analysis_dc_20260818/A3/lmt_binary_search_A3_2026-08-25_11-04-03.sqlite
+  4:
+    role: dam
+    gap_fill_sqlite: /data/chamal/projects/audreyanne/dc_pilot/raw_videos/analysis_dc_20260818/A4/lmt_binary_search_A4_2026-08-25_11-30-41.sqlite
 
 # The SHARED {name}_processed.sqlite file (0.Preprocessing.py's output)
 # covering ALL animals in this session, used only for the spatial metrics
 # (proximity, locomotion). Omit or leave null to skip those metrics.
-processed_detection_sqlite: null
+processed_detection_sqlite: /data/chamal/projects/audreyanne/dc_pilot/raw_videos/analysis_dc_20260818/dc_20260818_c1_ec_aab_processed.sqlite
