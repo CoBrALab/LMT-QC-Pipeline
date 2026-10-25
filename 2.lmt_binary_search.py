@@ -262,6 +262,93 @@ def build_initial_tasks(df_negative, df_all):
 class IntegrityError(Exception):
     """Raised when a frame-count integrity check fails."""
 
+class FrameDecisions:
+    """
+    Binary-search decisions for every frame in first_frame..last_frame
+    (Git Issue #33). Replaces the per-frame dict self.decisions and the
+    set self.explicitly_skipped_frames: one int8 per frame for the value
+    (1 IN, 0 OUT, -1 UNKNOWN, UNDECIDED if no decision yet) and one bool
+    per frame for "explicitly skipped". A 30h+ recording has ~3M frames to
+    decide; that is ~6 MB here, compared with hundreds of MB for a dict.
+
+    fill() returns a record of the values it overwrote, so the GUI's undo
+    log can revert() or reapply() it. Each record copies only the frame
+    range it wrote (2 bytes per frame).
+    """
+    UNDECIDED = -2
+
+    def __init__(self, first_frame, last_frame):
+        self.first_frame = int(first_frame)
+        self.last_frame  = int(last_frame)
+        n = self.last_frame - self.first_frame + 1
+        self.values  = np.full(n, self.UNDECIDED, dtype=np.int8)
+        self.skipped = np.zeros(n, dtype=bool)
+
+    def _slice(self, start, end):
+        # NumPy slicing silently truncates out-of-range ends and wraps
+        # negative indices, so an out-of-range write must fail here instead.
+        if not (self.first_frame <= start <= end <= self.last_frame):
+            raise IntegrityError(
+                f"Decision write {start}-{end} is outside the searchable "
+                f"frame range {self.first_frame}-{self.last_frame}.")
+        return slice(start - self.first_frame, end - self.first_frame + 1)
+
+    def fill(self, start, end, value, skipped=False):
+        s = self._slice(start, end)
+        record = (start, end, value, skipped, self.values[s].copy(),
+                  self.skipped[s].copy() if skipped else None)
+        self.reapply(record)
+        return record
+
+    def reapply(self, record):
+        start, end, value, skipped, _prev_values, _prev_skipped = record
+        s = self._slice(start, end)
+        self.values[s] = value
+        if skipped:
+            self.skipped[s] = True
+
+    def revert(self, record):
+        start, end, _value, skipped, prev_values, prev_skipped = record
+        s = self._slice(start, end)
+        self.values[s] = prev_values
+        if skipped:
+            self.skipped[s] = prev_skipped
+
+    def _index(self, frames):
+        frames = np.asarray(frames, dtype=np.int64)
+        in_range = (frames >= self.first_frame) & (frames <= self.last_frame)
+        return np.where(in_range, frames - self.first_frame, 0), in_range
+
+    def lookup(self, frames, default=-1):
+        """Vectorised decision values for `frames`; `default` where a frame
+        has no decision or is outside the range."""
+        idx, in_range = self._index(frames)
+        vals = self.values[idx].astype(np.int64)
+        return np.where(in_range & (vals != self.UNDECIDED), vals, default)
+
+    def skipped_mask(self, frames):
+        idx, in_range = self._index(frames)
+        return in_range & self.skipped[idx]
+
+    def get(self, frame, default=None):
+        v = int(self.lookup([frame], default=self.UNDECIDED)[0])
+        return default if v == self.UNDECIDED else v
+
+    def __getitem__(self, frame):
+        v = self.get(frame)
+        if v is None:
+            raise KeyError(frame)
+        return v
+
+    def is_skipped(self, frame):
+        return bool(self.skipped_mask([frame])[0])
+
+    def decided_frames(self):
+        return np.flatnonzero(self.values != self.UNDECIDED) + self.first_frame
+
+    def skipped_frames(self):
+        return np.flatnonzero(self.skipped) + self.first_frame
+
 def _check(label, expected, actual):
     """Raise IntegrityError with a clear message if expected != actual."""
     if expected != actual:
@@ -787,9 +874,10 @@ class BinarySearchGUI:
         self.redo_stack          = []
         self.history             = []
         self.current_task        = None
-        self.decisions           = {}
+        # FrameDecisions (Git Issue #33); created in _start() once the
+        # searchable frame range is known.
+        self.decisions           = None
         self._advance_token      = 0
-        self.explicitly_skipped_frames = set()
         self.skipped_frames      = set()
         self.skipped_gap_keys    = set()
         self.zero_zero_reviewed_gap_keys = set()
@@ -900,10 +988,9 @@ class BinarySearchGUI:
         self.task_stack    = tasks
         self.redo_stack    = []
         self.history       = []
-        self.decisions     = {}
+        self.decisions     = FrameDecisions(self.df_neg["FRAMENUMBER"].min(), self.df_neg["FRAMENUMBER"].max())
         self.current_task  = None
         self._advance_token = 0
-        self.explicitly_skipped_frames = set()
         self._gap_timings  = []
 
         if not self.task_stack:
@@ -1091,43 +1178,27 @@ class BinarySearchGUI:
     #  frames) until the OS killed the process, and each answer slowed down
     #  by seconds. Each history entry now only records the frame ranges
     #  that its action wrote, plus the values those frames had before, so
-    #  the log stores each frame about once over the whole session.
+    #  the log stores each frame about once over the whole session. Both
+    #  are now held in one FrameDecisions (NumPy arrays, ~2 bytes/frame).
     def _fill_range(self, writes, start, end, value, skipped=False):
         """
-        Set self.decisions[f] = value for f in start..end (inclusive), and
-        add those frames to self.explicitly_skipped_frames if skipped. A
-        record of the write is appended to `writes` (the list stored in
-        the current history entry) so _undo_writes/_redo_writes can revert
-        or repeat it. Only frames that already had a decision (or were
-        already skipped) are copied into the record -- normally none,
-        because the binary search writes disjoint ranges.
+        Set the decision for frames start..end (inclusive) to value, and
+        mark them explicitly skipped if skipped. The FrameDecisions record
+        of the write (the old values of that range) is appended to
+        `writes`, the list stored in the current history entry, so
+        _undo_writes/_redo_writes can revert or repeat it.
         """
-        frames = range(start, end + 1)
-        prev_values  = {f: self.decisions[f] for f in frames if f in self.decisions}
-        prev_skipped = {f for f in frames if f in self.explicitly_skipped_frames} if skipped else None
-        writes.append((start, end, value, skipped, prev_values, prev_skipped))
-        self._apply_write(start, end, value, skipped)
-
-    def _apply_write(self, start, end, value, skipped):
-        for f in range(start, end + 1):
-            self.decisions[f] = value
-        if skipped:
-            self.explicitly_skipped_frames.update(range(start, end + 1))
+        writes.append(self.decisions.fill(start, end, value, skipped))
 
     def _undo_writes(self, writes):
         # Reverse order, so a frame written twice by one action gets back
         # its value from before the first write.
-        for start, end, _value, skipped, prev_values, prev_skipped in reversed(writes):
-            for f in range(start, end + 1):
-                self.decisions.pop(f, None)
-            self.decisions.update(prev_values)
-            if skipped:
-                self.explicitly_skipped_frames.difference_update(range(start, end + 1))
-                self.explicitly_skipped_frames.update(prev_skipped)
+        for record in reversed(writes):
+            self.decisions.revert(record)
 
     def _redo_writes(self, writes):
-        for start, end, value, skipped, _prev_values, _prev_skipped in writes:
-            self._apply_write(start, end, value, skipped)
+        for record in writes:
+            self.decisions.reapply(record)
 
     #  Answer handler
     def _handle_answer(self, in_nest: bool):
@@ -1278,13 +1349,11 @@ class BinarySearchGUI:
         """
         An explicit "I cannot judge this" control. Unlike an answer, this
         does not narrow the search -- it deliberately marks the whole
-        current segment UNKNOWN (-1) and stops searching it, recording the
-        frames in self.explicitly_skipped_frames so _finish()'s integrity
-        check (which exists to catch frames *accidentally* left without a
-        decision) does not treat a deliberate skip as a bug. Frames in 
-        self.explicitly_skipped_frames so _finish()'s integrity
-        check (which exists to catch frames *accidentally* left without a
-        decision) does not treat a deliberate skip as a bug. Reported as
+        current segment UNKNOWN (-1) and stops searching it, marking the
+        frames as skipped in self.decisions (FrameDecisions.skipped) so
+        _finish()'s integrity check (which exists to catch frames
+        *accidentally* left without a decision) does not treat a
+        deliberate skip as a bug. Reported as
         Pool B ("Skip — Cannot Judge") in write_summary_report's IN_NEST = -1
         source breakdown.
         """
@@ -1391,13 +1460,13 @@ class BinarySearchGUI:
         decision_remaining = remaining_mask & ~is_skipped
 
         final_in_nest[skipped_remaining] = -1
-        final_in_nest[decision_remaining] = [
-            self.decisions.get(int(fn), -1) for fn in fn_arr[decision_remaining]
-        ]
+        final_in_nest[decision_remaining] = self.decisions.lookup(fn_arr[decision_remaining], default=-1)
 
         final_clf = dict(zip(fn_arr.tolist(), final_in_nest.tolist()))
 
-        unresolved = [fn for fn in searchable_frames if final_clf[fn] == -1 and fn not in self.explicitly_skipped_frames]
+        is_searchable = np.array([int(fn) in searchable_frames for fn in fn_arr])
+
+        unresolved = fn_arr[is_searchable & (final_in_nest == -1) & ~self.decisions.skipped_mask(fn_arr)].tolist()
         if unresolved:
             messagebox.showerror(
                 "Integrity Check Failed",
@@ -1410,8 +1479,6 @@ class BinarySearchGUI:
             return
 
         df_out["IN_NEST"] = final_in_nest
-
-        is_searchable = np.array([int(fn) in searchable_frames for fn in fn_arr])
 
         df_out["FILL_SOURCE"] = np.where(
             is_searchable, "BINARY_SEARCH",
