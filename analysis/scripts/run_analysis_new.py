@@ -127,7 +127,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from analysis.src.config import load_config, animals_by_role
+from analysis.src.config import load_config, animals_by_role, check_input_files
 from analysis.src.io import load_gap_fill_analysis, load_positions
 from analysis.src.bouts import (
     compute_nest_bouts,
@@ -436,6 +436,8 @@ def main():
     args = parser.parse_args()
 
     config = load_config(args.config)
+    # Before the output directory is created, so a bad path leaves nothing behind.
+    check_input_files(config)
     parent_output_dir = pathlib.Path(args.output_dir) if args.output_dir else config["output_dir"]
     output_dir = create_run_output_dir(parent_output_dir)
 

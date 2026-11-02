@@ -282,3 +282,29 @@ def test_run_analysis_two_runs_get_distinct_directories(tmp_path):
     )
     for d in subdirs:
         assert (d / "per_animal_summary.csv").exists()
+
+
+def test_run_analysis_new_missing_input_fails_before_creating_output(tmp_path):
+    # Git Issue #33 follow-up: a config that points to the wrong folder
+    # must fail with a clear message, before the run's output directory
+    # is created, and must not create an empty .sqlite at the wrong path.
+    config, _animals = _build_synthetic_session(tmp_path)
+    wrong_path = tmp_path / "A1" / "lmt_binary_search_A1.sqlite"
+    first_animal = next(iter(config["animals"]))
+    config["animals"][first_animal]["gap_fill_sqlite"] = str(wrong_path)
+    parent_output_dir = tmp_path / "outputs"
+    config_path = _write_config(tmp_path, config, parent_output_dir)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "analysis" / "scripts" / "run_analysis_new.py"),
+            "--config", str(config_path),
+        ],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode != 0
+    assert "FileNotFoundError" in result.stderr
+    assert str(wrong_path) in result.stderr
+    assert not wrong_path.exists()
+    assert not parent_output_dir.exists() or not any(parent_output_dir.iterdir())
