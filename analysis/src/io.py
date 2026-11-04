@@ -43,6 +43,29 @@ from lmt_common import DB_FPS, FRAME_CONVERSION  # noqa: E402  (import after sys
 __all__ = ["DB_FPS", "FRAME_CONVERSION", "load_gap_fill_analysis", "load_positions"]
 
 
+def _connect_readonly(sqlite_path):
+    """
+    Open an existing SQLite file read-only.
+
+    A plain sqlite3.connect() silently CREATES an empty database when the
+    path does not exist, so a wrong path in the config used to show up as
+    a misleading "has no GAP_FILL_ANALYSIS table" error -- and left a
+    0-byte .sqlite file behind at the wrong path (Git Issue #33
+    follow-up). Opening with mode=ro never creates or changes a file.
+    A missing or 0-byte file raises FileNotFoundError naming the path.
+    """
+    path = pathlib.Path(sqlite_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"{path} does not exist (or is not a file). Check the path in the config.")
+    if path.stat().st_size == 0:
+        raise FileNotFoundError(
+            f"{path} is empty (0 bytes), not a pipeline output. An earlier "
+            "run with a wrong path may have created it; delete it and check "
+            "the path in the config."
+        )
+    return sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+
+
 def load_gap_fill_analysis(sqlite_path) -> pd.DataFrame:
     """
     What it does
@@ -104,6 +127,8 @@ def load_gap_fill_analysis(sqlite_path) -> pd.DataFrame:
 
     Failure modes
     -------------
+    - File missing or 0 bytes -> FileNotFoundError naming the path. The
+      file is opened read-only, so a wrong path never creates a file.
     - Missing GAP_FILL_ANALYSIS table -> ValueError with a clear message.
     - Duplicate FRAMENUMBER -> ValueError (see Validation above).
     - More than one ANIMALID present -> ValueError.
@@ -128,7 +153,7 @@ def load_gap_fill_analysis(sqlite_path) -> pd.DataFrame:
     instead (MASS_X/MASS_Y never make it into GAP_FILL_ANALYSIS).
     """
     sqlite_path = str(sqlite_path)
-    conn = sqlite3.connect(sqlite_path)
+    conn = _connect_readonly(sqlite_path)
     try:
         tables = pd.read_sql_query(
             "SELECT name FROM sqlite_master WHERE type='table'", conn
@@ -239,7 +264,7 @@ def load_positions(processed_sqlite_path, animal_ids) -> pd.DataFrame:
     Used by analysis/src/spatial.py's pairwise_distance() and
     locomotor_distance().
     """
-    conn = sqlite3.connect(str(processed_sqlite_path))
+    conn = _connect_readonly(processed_sqlite_path)
     try:
         tables = pd.read_sql_query(
             "SELECT name FROM sqlite_master WHERE type='table'", conn

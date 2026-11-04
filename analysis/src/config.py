@@ -83,9 +83,8 @@ def load_config(config_path) -> dict:
       FileNotFoundError / yaml.YAMLError, not swallowed.
     - A gap_fill_sqlite path that doesn't exist on disk is NOT checked
       here (this function only validates the config's STRUCTURE, not
-      that referenced files exist) -- that failure surfaces naturally
-      and clearly from analysis.src.io.load_gap_fill_analysis() when the
-      script actually tries to read it.
+      that referenced files exist). Call check_input_files() on the
+      result to check the files before a run starts.
 
     Validation
     ----------
@@ -135,6 +134,54 @@ def load_config(config_path) -> dict:
         ).resolve()
 
     return config
+
+
+def check_input_files(config: dict) -> None:
+    """
+    What it does
+    ------------
+    Checks that every SQLite file named in a loaded config (each animal's
+    "gap_fill_sqlite", and "processed_detection_sqlite" if given) exists
+    and is not empty (0 bytes).
+
+    Why it exists
+    -------------
+    Git Issue #33 follow-up: a config that pointed to the wrong folder
+    failed only when the first animal was loaded, after the run's output
+    directory was already created, with a misleading "no
+    GAP_FILL_ANALYSIS table" error. Calling this before any output is
+    written reports every bad path at once.
+
+    Inputs
+    ------
+    config : output of load_config().
+
+    Failure modes
+    -------------
+    Raises FileNotFoundError listing every missing or 0-byte file, with
+    the animal ID (or config key) it belongs to.
+    """
+    paths = [(f"animal {aid} gap_fill_sqlite", cfg["gap_fill_sqlite"])
+             for aid, cfg in config["animals"].items()]
+    if config.get("processed_detection_sqlite"):
+        paths.append(("processed_detection_sqlite", config["processed_detection_sqlite"]))
+
+    problems = []
+    for label, path in paths:
+        path = pathlib.Path(path)
+        if not path.is_file():
+            problems.append(f"  {label}: {path} (does not exist)")
+        elif path.stat().st_size == 0:
+            problems.append(f"  {label}: {path} (empty, 0 bytes)")
+
+    if problems:
+        raise FileNotFoundError(
+            "These input file(s) from the config are missing or empty:\n"
+            + "\n".join(problems)
+            + "\nCheck the paths in the config. A 0-byte file is not a "
+            "pipeline output; an earlier run with a wrong path may have "
+            "created it."
+        )
 
 
 def animals_by_role(config: dict, role: str) -> list:

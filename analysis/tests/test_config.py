@@ -1,7 +1,7 @@
 import pytest
 import yaml
 
-from analysis.src.config import load_config, animals_by_role
+from analysis.src.config import load_config, animals_by_role, check_input_files
 
 
 def _write_yaml(tmp_path, content: dict, filename="config.yaml"):
@@ -89,3 +89,30 @@ def test_animals_by_role_none_of_that_role(tmp_path):
     path = _write_yaml(tmp_path, only_dams)
     config = load_config(path)
     assert animals_by_role(config, "babysitter") == []
+
+
+def test_check_input_files_all_present(tmp_path):
+    path = _write_yaml(tmp_path, VALID_CONFIG)
+    for aid in VALID_CONFIG["animals"]:
+        (tmp_path / f"a{aid}.sqlite").write_bytes(b"not empty")
+    check_input_files(load_config(path))
+
+
+def test_check_input_files_lists_every_missing_or_empty_file(tmp_path):
+    import copy
+
+    cfg = copy.deepcopy(VALID_CONFIG)
+    cfg["processed_detection_sqlite"] = "processed.sqlite"
+    path = _write_yaml(tmp_path, cfg)
+    (tmp_path / "a101.sqlite").write_bytes(b"not empty")
+    (tmp_path / "a102.sqlite").touch()  # 0 bytes
+    # a103, a104 and processed.sqlite do not exist.
+
+    with pytest.raises(FileNotFoundError) as excinfo:
+        check_input_files(load_config(path))
+    message = str(excinfo.value)
+    assert "animal 101" not in message
+    assert "animal 102" in message and "0 bytes" in message
+    assert "animal 103" in message and "animal 104" in message
+    assert "processed_detection_sqlite" in message
+    assert not (tmp_path / "a103.sqlite").exists()

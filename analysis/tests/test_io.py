@@ -89,3 +89,39 @@ def test_load_positions_unknown_animal_id_raises(detection_sqlite_factory):
     path = detection_sqlite_factory("detection.sqlite", rows)
     with pytest.raises(ValueError, match="No DETECTION rows"):
         load_positions(path, [999])
+
+
+def test_load_gap_fill_analysis_missing_file_raises_and_creates_nothing(tmp_path):
+    # Git Issue #33 follow-up: a wrong path used to create an empty
+    # database there and fail with a misleading "no GAP_FILL_ANALYSIS
+    # table" error.
+    path = tmp_path / "wrong_folder" / "lmt_binary_search_A1.sqlite"
+    path.parent.mkdir()
+
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        load_gap_fill_analysis(path)
+    assert not path.exists()
+
+
+def test_load_gap_fill_analysis_zero_byte_file_raises(tmp_path):
+    path = tmp_path / "lmt_binary_search_A1.sqlite"
+    path.touch()
+
+    with pytest.raises(FileNotFoundError, match="0 bytes"):
+        load_gap_fill_analysis(path)
+
+
+def test_load_gap_fill_analysis_does_not_modify_file(gap_fill_sqlite_factory):
+    path = gap_fill_sqlite_factory("a101.sqlite", make_frames([(1, 3), (0, 2)]))
+    before = path.read_bytes()
+
+    load_gap_fill_analysis(path)
+    assert path.read_bytes() == before
+
+
+def test_load_positions_missing_file_raises_and_creates_nothing(tmp_path):
+    path = tmp_path / "missing_processed.sqlite"
+
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        load_positions(path, [1])
+    assert not path.exists()
