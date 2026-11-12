@@ -1,4 +1,3 @@
-import copy
 import os
 import re
 import cv2
@@ -1061,7 +1060,7 @@ class BinarySearchGUI:
         if self._current_gap_index != incoming_task["gap_index"]:
             if self._gap_start_time is not None and self._current_gap_index is not None:
                 elapsed = time.time() - self._gap_start_time
-                for past_task, _, _, _ in reversed(self.history):
+                for past_task, _, _ in reversed(self.history):
                     if past_task["gap_index"] == self._current_gap_index:
                         self._gap_timings.append({"gap_index": self._current_gap_index, "gap_start": past_task["gap_start"], "gap_end": past_task["gap_end"], "duration_seconds": elapsed,})
                         break
@@ -1084,6 +1083,52 @@ class BinarySearchGUI:
         if token == self._advance_token:
             self._load_next_task()
 
+    #  Decision writes (undo log)
+    #  Git Issue #33: undo/redo used to deep-copy the whole self.decisions
+    #  dict (and self.explicitly_skipped_frames) on every answer and keep
+    #  every copy in self.history. self.decisions grows to millions of
+    #  entries on 30h+ recordings, so memory grew with (answers x decided
+    #  frames) until the OS killed the process, and each answer slowed down
+    #  by seconds. Each history entry now only records the frame ranges
+    #  that its action wrote, plus the values those frames had before, so
+    #  the log stores each frame about once over the whole session.
+    def _fill_range(self, writes, start, end, value, skipped=False):
+        """
+        Set self.decisions[f] = value for f in start..end (inclusive), and
+        add those frames to self.explicitly_skipped_frames if skipped. A
+        record of the write is appended to `writes` (the list stored in
+        the current history entry) so _undo_writes/_redo_writes can revert
+        or repeat it. Only frames that already had a decision (or were
+        already skipped) are copied into the record -- normally none,
+        because the binary search writes disjoint ranges.
+        """
+        frames = range(start, end + 1)
+        prev_values  = {f: self.decisions[f] for f in frames if f in self.decisions}
+        prev_skipped = {f for f in frames if f in self.explicitly_skipped_frames} if skipped else None
+        writes.append((start, end, value, skipped, prev_values, prev_skipped))
+        self._apply_write(start, end, value, skipped)
+
+    def _apply_write(self, start, end, value, skipped):
+        for f in range(start, end + 1):
+            self.decisions[f] = value
+        if skipped:
+            self.explicitly_skipped_frames.update(range(start, end + 1))
+
+    def _undo_writes(self, writes):
+        # Reverse order, so a frame written twice by one action gets back
+        # its value from before the first write.
+        for start, end, _value, skipped, prev_values, prev_skipped in reversed(writes):
+            for f in range(start, end + 1):
+                self.decisions.pop(f, None)
+            self.decisions.update(prev_values)
+            if skipped:
+                self.explicitly_skipped_frames.difference_update(range(start, end + 1))
+                self.explicitly_skipped_frames.update(prev_skipped)
+
+    def _redo_writes(self, writes):
+        for start, end, value, skipped, _prev_values, _prev_skipped in writes:
+            self._apply_write(start, end, value, skipped)
+
     #  Answer handler
     def _handle_answer(self, in_nest: bool):
         task = self.current_task
@@ -1093,10 +1138,9 @@ class BinarySearchGUI:
         self._advance_token += 1
         token = self._advance_token
 
-        snapshot = copy.deepcopy(self.decisions)
-        skip_snapshot = copy.deepcopy(self.explicitly_skipped_frames)
-        stack_snapshot = list(self.task_stack)
-        self.history.append((task, snapshot, skip_snapshot, stack_snapshot))
+        # Git Issue #33: `writes` is filled in place by _fill_range below.
+        writes = []
+        self.history.append((task, list(self.task_stack), writes))
         self.redo_stack.clear()
 
         seg_start = task.get("seg_start", task["gap_start"])
@@ -1135,8 +1179,7 @@ class BinarySearchGUI:
         #  hand-off on an IN answer, regardless of segment duration.
         if gtype != GAP_TYPE_00 and seg_duration_minutes <= FILL_ENTIRE_SEGMENT_IF_DURATION_LESS_THAN_IN_MINUTES:
             fill_value = 1 if in_nest else 0
-            for f in range(seg_start, seg_end + 1):
-                self.decisions[f] = fill_value
+            self._fill_range(writes, seg_start, seg_end, fill_value)
             label = "IN NEST" if in_nest else "OUT OF NEST"
             color = "green"   if in_nest else "red"
             self._refresh_display(task, answer_text=f"{label} \u2014 short segment, filling entirely", answer_color=color)
@@ -1146,38 +1189,32 @@ class BinarySearchGUI:
         #  Type 10: in-nest → out-of-nest
         if gtype == GAP_TYPE_10:
             if in_nest:
-                for f in range(seg_start, mid + 1):
-                    self.decisions[f] = 1
+                self._fill_range(writes, seg_start, mid, 1)
                 self._refresh_display(task, answer_text="IN NEST \u2014 filling left, continuing right", answer_color="green")
                 if mid + 1 <= seg_end:
                     self.task_stack.insert(0, _make_subtask(mid + 1, seg_end))
             else:
                 if seg_start <= mid - 1:
-                    for f in range(mid, seg_end + 1):
-                        self.decisions[f] = 0
+                    self._fill_range(writes, mid, seg_end, 0)
                     self.task_stack.insert(0, _make_subtask(seg_start, mid - 1))
                 else:
-                    for f in range(mid, seg_end + 1):
-                        self.decisions[f] = 0
+                    self._fill_range(writes, mid, seg_end, 0)
                 self._refresh_display(task, answer_text="OUT OF NEST — searching left half", answer_color="red")
             self.root.after(300, lambda t=token: self._deferred_advance(t))
 
         #  Type 01: out-of-nest → in-nest
         elif gtype == GAP_TYPE_01:
             if in_nest:
-                for f in range(mid, seg_end + 1):
-                    self.decisions[f] = 1
+                self._fill_range(writes, mid, seg_end, 1)
                 self._refresh_display(task, answer_text="IN NEST \u2014 filling right, continuing left", answer_color="green")
                 if seg_start <= mid - 1:
                     self.task_stack.insert(0, _make_subtask(seg_start, mid - 1))
             else:
                 if mid + 1 <= seg_end:
-                    for f in range(seg_start, mid + 1):
-                        self.decisions[f] = 0
+                    self._fill_range(writes, seg_start, mid, 0)
                     self.task_stack.insert(0, _make_subtask(mid + 1, seg_end))
                 else:
-                    for f in range(seg_start, mid + 1):
-                        self.decisions[f] = 0
+                    self._fill_range(writes, seg_start, mid, 0)
                 self._refresh_display(task, answer_text="OUT OF NEST — searching right half", answer_color="red")
             self.root.after(300, lambda t=token: self._deferred_advance(t))
 
@@ -1195,8 +1232,7 @@ class BinarySearchGUI:
                 # gap's right edge is already known OUT (that's what made
                 # this a type-00 gap in the first place), so the remainder
                 # is exactly a type-10 sub-problem.
-                for f in range(seg_start, seg_end + 1):
-                    self.decisions[f] = 1
+                self._fill_range(writes, seg_start, seg_end, 1)
 
                 # Discard any remaining precomputed OUT-checkpoint tasks for
                 # this gap -- they're superseded by the type-10 search below
@@ -1216,8 +1252,7 @@ class BinarySearchGUI:
                     # nothing remains to search.
                     self._refresh_display(task, answer_text="IN NEST \u2014 filled toward left", answer_color="green")
             else:
-                for f in range(seg_start, seg_end + 1):
-                    self.decisions[f] = 0
+                self._fill_range(writes, seg_start, seg_end, 0)
                 self._refresh_display(task, answer_text="OUT OF NEST \u2014 filled toward left", answer_color="red")
             self.root.after(300, lambda t=token: self._deferred_advance(t))
 
@@ -1260,18 +1295,14 @@ class BinarySearchGUI:
         self._advance_token += 1
         token = self._advance_token
 
-        snapshot = copy.deepcopy(self.decisions)
-        skip_snapshot = copy.deepcopy(self.explicitly_skipped_frames)
-        stack_snapshot = list(self.task_stack)
-        self.history.append((task, snapshot, skip_snapshot, stack_snapshot))
+        writes = []
+        self.history.append((task, list(self.task_stack), writes))
         self.redo_stack.clear()
 
         seg_start = task.get("seg_start", task["gap_start"])
         seg_end   = task.get("seg_end",   task["gap_end"])
 
-        for f in range(seg_start, seg_end + 1):
-            self.decisions[f] = -1
-            self.explicitly_skipped_frames.add(f)
+        self._fill_range(writes, seg_start, seg_end, -1, skipped=True)
 
         self._refresh_display(task, answer_text="SKIPPED \u2014 cannot judge, marked UNKNOWN", answer_color="#b8860b")
         self.root.after(300, lambda t=token: self._deferred_advance(t))
@@ -1281,13 +1312,14 @@ class BinarySearchGUI:
         if not self.history:
             return
         self._advance_token += 1
+        entry = self.history.pop()
+        prev_task, prev_stack, writes = entry
+        # The redo entry keeps the state after the undone action (the task
+        # then pending and its stack) next to the history entry itself, so
+        # _go_next can repeat the writes and put the entry back.
         if self.current_task is not None:
-            self.redo_stack.append(
-                (self.current_task, copy.deepcopy(self.decisions),
-                 copy.deepcopy(self.explicitly_skipped_frames), list(self.task_stack)))
-        prev_task, prev_decisions, prev_skipped, prev_stack = self.history.pop()
-        self.decisions    = prev_decisions
-        self.explicitly_skipped_frames = prev_skipped
+            self.redo_stack.append((self.current_task, list(self.task_stack), entry))
+        self._undo_writes(writes)
         self.current_task = prev_task
         self.task_stack   = prev_stack
         self._refresh_display(prev_task, answer_text="Undone \u2014 re-answer or continue", answer_color="#888888")
@@ -1295,12 +1327,9 @@ class BinarySearchGUI:
     def _go_next(self):
         if self.redo_stack:
             self._advance_token += 1
-            redo_task, redo_decisions, redo_skipped, redo_stack_snapshot = self.redo_stack.pop()
-            if self.current_task is not None:
-                self.history.append((self.current_task, copy.deepcopy(self.decisions),
-                                      copy.deepcopy(self.explicitly_skipped_frames), list(self.task_stack)))
-            self.decisions    = redo_decisions
-            self.explicitly_skipped_frames = redo_skipped
+            redo_task, redo_stack_snapshot, entry = self.redo_stack.pop()
+            self._redo_writes(entry[2])
+            self.history.append(entry)
             self.current_task = redo_task
             self.task_stack   = redo_stack_snapshot
             self._refresh_display(redo_task,
@@ -1330,7 +1359,7 @@ class BinarySearchGUI:
         #  Close last gap timer
         if self._gap_start_time is not None and self._current_gap_index is not None:
             elapsed = time.time() - self._gap_start_time
-            for past_task, _, _, _ in reversed(self.history):
+            for past_task, _, _ in reversed(self.history):
                 if past_task["gap_index"] == self._current_gap_index:
                     self._gap_timings.append({
                         "gap_index":        self._current_gap_index,
