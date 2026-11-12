@@ -11,6 +11,7 @@ proportional to the frames written, not to (answers x decided frames).
 
 import random
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -37,9 +38,9 @@ def _new_gui(m):
     gui.redo_stack = []
     gui.history = []
     gui.current_task = None
-    gui.decisions = {}
+    # Covers all gap frames of _build_tasks (1001..48999).
+    gui.decisions = m.FrameDecisions(0, 50000)
     gui._advance_token = 0
-    gui.explicitly_skipped_frames = set()
     gui._current_gap_index = None
     gui._gap_start_time = None
     gui._gap_timings = []
@@ -110,8 +111,8 @@ def _task_key(task):
 def _state(gui):
     """A full, independent copy of the state that undo/redo must restore."""
     return (
-        dict(gui.decisions),
-        frozenset(gui.explicitly_skipped_frames),
+        gui.decisions.values.tobytes(),
+        gui.decisions.skipped.tobytes(),
         _task_key(gui.current_task),
         [_task_key(t) for t in gui.task_stack],
     )
@@ -175,7 +176,7 @@ def _run_random_session(m, seed):
     assert gui.finished, "session did not reach _finish() within the step limit"
     # Every gap frame has a decision at the end of the session.
     interior = set().union(*(range(gs + 1, ge) for gs, ge in gaps))
-    assert set(gui.decisions) == interior
+    assert set(gui.decisions.decided_frames().tolist()) == interior
     return gui
 
 
@@ -184,16 +185,18 @@ def test_random_session_matches_full_snapshot_reference(binary_search_module, se
     _run_random_session(binary_search_module, seed)
 
 
-def test_undo_after_finish_is_not_needed_but_history_is_consistent(
-    binary_search_module,
-):
+def test_undoing_every_step_returns_to_empty_state(binary_search_module):
     """After a full session, undoing every step returns to an empty state."""
     m = binary_search_module
     gui = _run_random_session(m, seed=1)
     while gui.history:
         m.BinarySearchGUI._go_previous(gui)
-    assert gui.decisions == {}
-    assert gui.explicitly_skipped_frames == set()
+    assert len(gui.decisions.decided_frames()) == 0
+    assert len(gui.decisions.skipped_frames()) == 0
+
+
+def _decided(d):
+    return {int(f): d[int(f)] for f in d.decided_frames()}
 
 
 def test_undo_restores_frames_written_twice(binary_search_module):
@@ -201,33 +204,63 @@ def test_undo_restores_frames_written_twice(binary_search_module):
     that already have a decision is reverted to the old values."""
     m = binary_search_module
     gui = _new_gui(m)
-    gui.decisions = {f: 0 for f in range(100, 200)}
-    gui.explicitly_skipped_frames = {150}
+    gui.decisions.fill(100, 199, 0)
+    gui.decisions.fill(150, 150, -1, skipped=True)
+    before = _decided(gui.decisions)
 
     writes = []
     m.BinarySearchGUI._fill_range(gui, writes, 150, 250, 1)
     m.BinarySearchGUI._fill_range(gui, writes, 120, 160, -1, skipped=True)
-    assert (
-        gui.decisions[130] == -1 and gui.decisions[170] == 1 and gui.decisions[240] == 1
-    )
-    assert gui.explicitly_skipped_frames == set(range(120, 161))
+    after = _decided(gui.decisions)
+    assert after[130] == -1 and after[170] == 1 and after[240] == 1
+    assert gui.decisions.skipped_frames().tolist() == list(range(120, 161))
 
     m.BinarySearchGUI._undo_writes(gui, writes)
-    assert gui.decisions == {f: 0 for f in range(100, 200)}
-    assert gui.explicitly_skipped_frames == {150}
+    assert _decided(gui.decisions) == before
+    assert gui.decisions.skipped_frames().tolist() == [150]
 
     m.BinarySearchGUI._redo_writes(gui, writes)
-    assert (
-        gui.decisions[130] == -1 and gui.decisions[170] == 1 and gui.decisions[240] == 1
-    )
-    assert gui.explicitly_skipped_frames == set(range(120, 161))
+    assert _decided(gui.decisions) == after
+    assert gui.decisions.skipped_frames().tolist() == list(range(120, 161))
+
+
+def test_frame_decisions_get_and_lookup(binary_search_module):
+    m = binary_search_module
+    d = m.FrameDecisions(1000, 1999)
+    d.fill(1100, 1199, 1)
+    d.fill(1200, 1209, -1, skipped=True)
+
+    assert d.get(1150) == 1
+    assert d.get(1205) == -1
+    assert d.get(1500) is None
+    assert d.get(5) is None  # outside the range
+    with pytest.raises(KeyError):
+        d[1500]
+    assert d.is_skipped(1205) and not d.is_skipped(1150) and not d.is_skipped(5)
+
+    frames = np.array([5, 1099, 1100, 1199, 1205, 1999, 3000])
+    assert d.lookup(frames, default=-1).tolist() == [-1, -1, 1, 1, -1, -1, -1]
+    assert d.lookup(frames, default=9).tolist() == [9, 9, 1, 1, -1, 9, 9]
+    assert d.skipped_mask(frames).tolist() == [False] * 4 + [True, False, False]
+
+
+@pytest.mark.parametrize(
+    "start, end", [(999, 1010), (1990, 2000), (-5, 10), (1500, 1400)]
+)
+def test_frame_decisions_rejects_out_of_range_writes(binary_search_module, start, end):
+    """NumPy slicing would silently truncate or wrap these; fill() must fail."""
+    m = binary_search_module
+    d = m.FrameDecisions(1000, 1999)
+    with pytest.raises(m.IntegrityError):
+        d.fill(start, end, 1)
+    assert len(d.decided_frames()) == 0
 
 
 def test_history_size_is_proportional_to_frames_written(binary_search_module):
     """Git Issue #33: each history entry used to hold a full copy of
     self.decisions, so the history grew with (answers x decided frames).
-    Now the stored old values stay empty when ranges are disjoint (the
-    normal case), and the total frames recorded equals the frames decided."""
+    Now each record holds only its own range, and with disjoint ranges (the
+    normal case) the frames recorded equal the frames decided."""
     m = binary_search_module
     gui = _new_gui(m)
     tasks, _ = _build_tasks(m)
@@ -242,9 +275,9 @@ def test_history_size_is_proportional_to_frames_written(binary_search_module):
     assert answers > 10
 
     all_writes = [w for _task, _stack, writes in gui.history for w in writes]
-    stored_old_values = sum(
-        len(prev_values) for *_, prev_values, _prev_skipped in all_writes
-    )
     frames_recorded = sum(end - start + 1 for start, end, *_ in all_writes)
-    assert stored_old_values == 0
-    assert frames_recorded == len(gui.decisions)
+    stored_bytes = sum(
+        prev_values.nbytes for *_, prev_values, _prev_skipped in all_writes
+    )
+    assert frames_recorded == len(gui.decisions.decided_frames())
+    assert stored_bytes == frames_recorded  # one int8 per frame written

@@ -81,9 +81,9 @@ def _new_gui(m):
     gui.redo_stack = []
     gui.history = []
     gui.current_task = None
-    gui.decisions = {}
+    # Covers every frame used by the tests in this file (up to 9100).
+    gui.decisions = m.FrameDecisions(0, 10000)
     gui._advance_token = 0
-    gui.explicitly_skipped_frames = set()
     gui._current_gap_index = None
     gui._gap_start_time = None
     gui._gap_timings = []
@@ -222,7 +222,7 @@ def test_skip_works_on_type00_checkpoint_task(binary_search_module):
     gui.root.run_all_pending()
 
     assert all(gui.decisions.get(f) == -1 for f in range(2801, 4601))
-    assert all(f in gui.explicitly_skipped_frames for f in range(2801, 4601))
+    assert all(gui.decisions.is_skipped(f) for f in range(2801, 4601))
 
 def test_undo_redo_round_trip_across_type00_checkpoints(binary_search_module):
     """OUT answers keep sampling through the remaining precomputed
@@ -376,7 +376,7 @@ def test_00_to_10_handoff_no_duplicate_or_missing_frames(binary_search_module):
 
     gap_start, gap_end = gs + 1, ge - 1
     all_frames = set(range(gap_start, gap_end + 1))
-    decided_frames = {f for f, v in gui.decisions.items() if gap_start <= f <= gap_end}
+    decided_frames = {int(f) for f in gui.decisions.decided_frames() if gap_start <= f <= gap_end}
     assert decided_frames == all_frames  # every interior frame decided exactly once
     assert gui.decisions[gap_start] == 0
     assert gui.decisions[4600] == 0     # t2's checkpoint, OUT
@@ -413,7 +413,7 @@ def test_skip_works_on_handed_off_10_subtask(binary_search_module):
     gui.root.run_all_pending()
 
     assert all(gui.decisions.get(f) == -1 for f in range(2801, 6552))
-    assert all(f in gui.explicitly_skipped_frames for f in range(2801, 6552))
+    assert all(gui.decisions.is_skipped(f) for f in range(2801, 6552))
 
 def test_undo_redo_across_00_to_10_handoff(binary_search_module):
     """Undo right after the hand-off must restore the discarded OUT-style
